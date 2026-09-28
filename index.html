@@ -7026,5 +7026,197 @@ function loop() {
 }
 loop();
 </script>
+<!-- ===== ONLINE VS (追加機能): PeerJS(WebRTC) 経由の1対1対戦 ===== -->
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+(function(){
+"use strict";
+const PFX="nbs-vs-",AL="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",HP=100,DT=1000/60;
+const S={on:false,scr:"menu",w:0,peer:null,conn:null,host:false,code:"",msg:"",mb:[],ob:[],sp:[],me:{},op:{},t:0,res:"",acc:0,last:0,id:0,k:{},tx:null,ty:null,fl:0};
+const TB={x:60,y:590,w:360,h:45};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const inR=(p,x,y,w,h)=>p.x>=x&&p.x<=x+w&&p.y>=y&&p.y<=y+h;
+const send=o=>{try{if(S.conn&&S.conn.open)S.conn.send(o)}catch(e){}};
+const titleOk=()=>titleScreen&&!showDailyBonusPopup&&!abortPopup&&!settingsScreen&&!S.on;
+
+/* ---- 接続 ---- */
+function cleanup(){try{S.conn&&S.conn.close()}catch(e){}try{S.peer&&S.peer.destroy()}catch(e){}S.conn=S.peer=null}
+function back(m){cleanup();S.scr="menu";S.msg=m||""}
+function host(){
+  if(typeof Peer==="undefined")return back("通信ライブラリを読み込めませんでした");
+  S.host=true;S.scr="wait";S.msg="";
+  S.code=Array.from({length:5},()=>AL[Math.random()*AL.length|0]).join("");
+  const p=S.peer=new Peer(PFX+S.code);
+  p.on("connection",c=>{if(S.conn){c.close();return}bind(c)});
+  p.on("error",e=>{if(e.type==="unavailable-id"){cleanup();host()}else back("接続エラー: "+e.type)});
+}
+function join(){
+  const c=(prompt("相手から聞いた部屋コードを入力")||"").trim().toUpperCase();
+  if(!c)return;
+  if(typeof Peer==="undefined")return back("通信ライブラリを読み込めませんでした");
+  S.host=false;S.code=c;S.scr="wait";S.msg="";
+  const p=S.peer=new Peer();
+  p.on("open",()=>bind(p.connect(PFX+c,{reliable:true,serialization:"json"})));
+  p.on("error",e=>back(e.type==="peer-unavailable"?"その部屋は見つかりません":"接続エラー: "+e.type));
+}
+function bind(c){
+  S.conn=c;
+  const hi=()=>send({t:"hi"});
+  c.open?hi():c.on("open",hi);
+  c.on("data",d=>{
+    if(d.t==="hi"){if(S.host){send({t:"go"});begin()}}
+    else if(d.t==="go")begin();
+    else if(d.t==="s"){S.op.tx=W-d.x;S.op.ty=H-d.y;S.op.hp=d.hp}
+    else if(d.t==="b")S.ob.push({id:d.id,x:W-d.x,y:H-d.y,vx:-d.vx,vy:-d.vy,d:d.d});
+    else if(d.t==="h"){const i=S.mb.findIndex(b=>b.id===d.id);if(i>=0){spark(S.mb[i]);S.mb.splice(i,1);sfx.enemyHit()}}
+    else if(d.t==="dead")fin(S.res==="lose"?"draw":"win");
+  });
+  c.on("close",()=>{
+    if(S.scr==="play"||S.scr==="count")fin("win","相手が切断しました");
+    else if(S.scr==="wait")back("切断されました");
+  });
+}
+
+/* ---- バトル ---- */
+function begin(){
+  S.scr="count";S.t=0;S.mb=[];S.ob=[];S.sp=[];S.res="";S.msg="";S.tx=null;
+  S.me={x:W/2,y:H-110,hp:HP,cd:0};S.op={x:W/2,y:110,tx:W/2,ty:110,hp:HP};
+}
+function fin(r,m){if(S.scr==="result")return;S.scr="result";S.res=r;S.msg=m||"";r==="win"?sfx.clear():sfx.gameOver()}
+function spark(b){S.sp.push({x:b.x,y:b.y,l:12})}
+function add(x,y,vx,vy,d){const b={id:++S.id,x,y,vx,vy,d};S.mb.push(b);send({t:"b",id:b.id,x,y,vx,vy,d})}
+function clampMe(){S.me.x=clamp(S.me.x,14,W-14);S.me.y=clamp(S.me.y,H/2+30,H-34)}
+function step(){
+  const m=S.me,o=S.op,k=S.k;S.t++;
+  m.x+=((k.arrowright||k.d)?5:0)-((k.arrowleft||k.a)?5:0);
+  m.y+=((k.arrowdown||k.s)?5:0)-((k.arrowup||k.w)?5:0);
+  clampMe();
+  o.x+=(o.tx-o.x)*.4;o.y+=(o.ty-o.y)*.4;
+  if(S.scr==="count"&&S.t>=180)S.scr="play";
+  if(S.scr==="play"&&--m.cd<=0){
+    if(S.w===0){add(m.x,m.y-14,0,-10,6);m.cd=9}
+    else{for(const a of[-.25,0,.25])add(m.x,m.y-14,Math.sin(a)*8,-Math.cos(a)*8,4);m.cd=20}
+  }
+  for(const b of S.mb){b.x+=b.vx;b.y+=b.vy}
+  S.mb=S.mb.filter(b=>b.y>-20&&b.y<H+20&&b.x>-20&&b.x<W+20);
+  for(let i=S.ob.length-1;i>=0;i--){
+    const b=S.ob[i];b.x+=b.vx;b.y+=b.vy;
+    if(b.y<-20||b.y>H+20||b.x<-20||b.x>W+20){S.ob.splice(i,1);continue}
+    if(S.scr==="play"&&Math.hypot(b.x-m.x,b.y-m.y)<14){
+      m.hp-=b.d;send({t:"h",id:b.id});spark(b);S.ob.splice(i,1);S.fl=8;sfx.playerHit();
+      if(m.hp<=0){m.hp=0;send({t:"s",x:m.x,y:m.y,hp:0});send({t:"dead"});fin("lose")}
+    }
+  }
+  for(const s of S.sp)s.l--;
+  S.sp=S.sp.filter(s=>s.l>0);if(S.fl>0)S.fl--;
+  if(S.t%2===0)send({t:"s",x:m.x,y:m.y,hp:m.hp});
+}
+
+/* ---- 描画 ---- */
+function T(s,x,y,sz,col){ctx.font=`bold ${sz}px Arial`;ctx.fillStyle=col;ctx.shadowColor=col;ctx.shadowBlur=12;ctx.fillText(s,x,y);ctx.shadowBlur=0}
+function btn(b){
+  ctx.fillStyle=b.on?b.c:"rgba(0,0,0,.6)";ctx.strokeStyle=b.c;ctx.lineWidth=2;
+  ctx.beginPath();ctx.roundRect(b.x,b.y,b.w,b.h,10);ctx.fill();ctx.stroke();
+  T(b.l,b.x+b.w/2,b.y+b.h/2+6,16,b.on?"#000":b.c);
+}
+function btns(){
+  if(S.scr==="menu")return[
+    {x:60,y:250,w:175,h:50,l:"① ノーマル",c:"#00ffcc",on:S.w===0,f:()=>S.w=0},
+    {x:245,y:250,w:175,h:50,l:"② スプレッド",c:"#ffcc00",on:S.w===1,f:()=>S.w=1},
+    {x:60,y:340,w:360,h:55,l:"🏠 部屋をつくる",c:"#ff00ff",f:host},
+    {x:60,y:410,w:360,h:55,l:"🔑 コードで参加",c:"#66ccff",f:join},
+    {x:60,y:500,w:360,h:45,l:"← タイトルへ",c:"#888888",f:()=>{cleanup();S.on=false}}];
+  if(S.scr==="wait")return[{x:60,y:540,w:360,h:45,l:"キャンセル",c:"#888888",f:()=>back()}];
+  return[];
+}
+function bar(y,hp,col){ctx.fillStyle="#222";ctx.fillRect(20,y,W-40,10);ctx.fillStyle=col;ctx.fillRect(20,y,(W-40)*Math.max(0,hp)/HP,10)}
+function ship(x,y,d,col){
+  ctx.save();ctx.shadowBlur=15;ctx.shadowColor=col;ctx.fillStyle=col;
+  ctx.beginPath();ctx.moveTo(x,y-14*d);ctx.lineTo(x-11,y+10*d);ctx.lineTo(x+11,y+10*d);ctx.closePath();ctx.fill();ctx.restore();
+}
+function vdraw(){
+  ctx.save();ctx.textAlign="center";ctx.fillStyle="rgba(0,0,8,.8)";ctx.fillRect(0,0,W,H);
+  if(S.scr==="menu"||S.scr==="wait"){
+    T("ONLINE VS",W/2,100,40,"#ff00ff");T("1対1 打ち合いバトル",W/2,140,14,"#ffffff");
+    if(S.scr==="menu")T("武器を選ぶ",W/2,235,13,"#aaaaaa");
+    else if(S.host){T("この部屋コードを相手に送ってね",W/2,290,14,"#ffffff");T(S.code,W/2,380,64,"#00ffcc");T("相手を待っています…",W/2,440,14,"#ffcc00")}
+    else T("接続中…",W/2,320,18,"#ffffff");
+    if(S.msg)T(S.msg,W/2,S.scr==="menu"?600:500,14,"#ff6666");
+    for(const b of btns())btn(b);
+  }else{
+    ctx.strokeStyle="rgba(255,255,255,.15)";ctx.setLineDash([8,8]);ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();ctx.setLineDash([]);
+    bar(12,S.op.hp,"#ff3366");bar(H-24,S.me.hp,"#00ffcc");
+    ship(S.op.x,S.op.y,-1,"#ff3366");ship(S.me.x,S.me.y,1,getPlayerColor()||"#00ffcc");
+    ctx.shadowBlur=8;
+    ctx.fillStyle="#ffffff";ctx.shadowColor="#00ffcc";for(const b of S.mb){ctx.beginPath();ctx.arc(b.x,b.y,4,0,TAU);ctx.fill()}
+    ctx.shadowColor="#ff3366";ctx.fillStyle="#ff99aa";for(const b of S.ob){ctx.beginPath();ctx.arc(b.x,b.y,4,0,TAU);ctx.fill()}
+    ctx.shadowBlur=0;ctx.strokeStyle="#ffffff";
+    for(const s of S.sp){ctx.globalAlpha=s.l/12;ctx.beginPath();ctx.arc(s.x,s.y,14-s.l,0,TAU);ctx.stroke()}
+    ctx.globalAlpha=1;
+    if(S.fl){ctx.fillStyle=`rgba(255,0,68,${S.fl/30})`;ctx.fillRect(0,0,W,H)}
+    if(S.scr==="count")T(String(Math.ceil((180-S.t)/60)),W/2,H/2+20,80,"#ffffff");
+    if(S.scr==="result"){
+      ctx.fillStyle="rgba(0,0,0,.6)";ctx.fillRect(0,0,W,H);
+      T(S.res==="win"?"YOU WIN!":S.res==="lose"?"YOU LOSE":"DRAW",W/2,H/2,48,S.res==="win"?"#ffcc00":"#ff3366");
+      if(S.msg)T(S.msg,W/2,H/2+40,14,"#ffffff");
+      T("タップで戻る",W/2,H/2+80,14,"#aaaaaa");
+    }
+  }
+  ctx.restore();
+}
+function titleBtn(){
+  ctx.save();ctx.textAlign="center";
+  btn({...TB,l:"🌐 オンライン対戦",c:"#ff00ff"});ctx.restore();
+}
+
+/* ---- 既存ループへの差し込み ---- */
+const _u=window.update,_d=window.draw;
+window.update=function(){
+  if(!S.on)return _u();
+  updateStars();
+  const n=performance.now();S.acc=Math.min(100,S.acc+n-S.last);S.last=n;
+  while(S.acc>=DT){if(S.scr==="count"||S.scr==="play"||S.scr==="result")step();S.acc-=DT}
+};
+window.draw=function(){
+  if(S.on){drawBackground();vdraw();return}
+  _d();if(titleOk())titleBtn();
+};
+
+/* ---- 入力 ---- */
+const P=e=>getPointerPosition(e);
+function down(e){
+  if(e.target!==canvas)return;
+  if(!S.on){
+    if(!titleOk())return;
+    if(inR(P(e),TB.x,TB.y,TB.w,TB.h)){e.stopImmediatePropagation();e.preventDefault();initAudio();sfx.tap();S.on=true;S.scr="menu";S.msg="";S.k={};S.last=performance.now();S.acc=0}
+    return;
+  }
+  e.stopImmediatePropagation();e.preventDefault();initAudio();
+  const p=P(e);
+  if(S.scr==="result"){back();return}
+  if(S.scr==="menu"||S.scr==="wait"){for(const b of btns())if(inR(p,b.x,b.y,b.w,b.h)){sfx.tap();b.f();return}return}
+  S.tx=p.x;S.ty=p.y;
+}
+function move(e){
+  if(!S.on||e.target!==canvas)return;
+  e.stopImmediatePropagation();e.preventDefault();
+  if(S.tx===null||(S.scr!=="play"&&S.scr!=="count"))return;
+  const p=P(e);S.me.x+=p.x-S.tx;S.me.y+=p.y-S.ty;S.tx=p.x;S.ty=p.y;clampMe();
+}
+function up(e){if(!S.on)return;e.stopImmediatePropagation();S.tx=null}
+const O={capture:true,passive:false};
+for(const ev of["touchstart","mousedown"])window.addEventListener(ev,down,O);
+for(const ev of["touchmove","mousemove"])window.addEventListener(ev,move,O);
+for(const ev of["touchend","touchcancel","mouseup"])window.addEventListener(ev,up,O);
+window.addEventListener("keydown",e=>{
+  if(!S.on)return;
+  e.stopImmediatePropagation();const k=e.key.toLowerCase();S.k[k]=true;
+  if(k.startsWith("arrow")||k===" ")e.preventDefault();
+  if(k==="escape"){if(S.scr==="menu"){cleanup();S.on=false}else if(S.scr==="wait"||S.scr==="result")back()}
+},true);
+window.addEventListener("keyup",e=>{S.k[e.key.toLowerCase()]=false},true);
+})();
+</script>
+
 </body>
 </html>
