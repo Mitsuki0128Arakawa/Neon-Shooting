@@ -36,7 +36,7 @@ canvas {
 "use strict";
 
 /* ==================================================================
-   Web Audio API による音声合成エンジン
+   Web Audio API 音声合成エンジン
 ================================================================== */
 let audioCtx = null;
 let audioInitialized = false;
@@ -45,11 +45,9 @@ let seEnabled = true;
 let bgmVolume = 0.35;
 let seVolume = 0.5;
 let bgmSchedulerId = null;
-let bgmStartTime = 0;
 let bgmCurrentStep = 0;
 const BGM_BPM = 128;
 const BGM_STEP_DUR = 60 / BGM_BPM / 4;
-const BGM_TOTAL_STEPS = 64;
 
 function initAudio() {
   if (audioInitialized) return;
@@ -85,9 +83,7 @@ function playTone(opts) {
   const gain = audioCtx.createGain();
   osc.type = opts.type || "square";
   osc.frequency.setValueAtTime(opts.freq || 440, t);
-  if (opts.freqEnd) {
-    osc.frequency.exponentialRampToValueAtTime(opts.freqEnd, t + (opts.dur || 0.1));
-  }
+  if (opts.freqEnd) osc.frequency.exponentialRampToValueAtTime(opts.freqEnd, t + (opts.dur || 0.1));
   const vol = opts.vol !== undefined ? opts.vol : 0.3;
   gain.gain.setValueAtTime(0, t);
   gain.gain.linearRampToValueAtTime(vol, t + 0.005);
@@ -97,11 +93,8 @@ function playTone(opts) {
     const f = audioCtx.createBiquadFilter();
     f.type = opts.filter;
     f.frequency.value = opts.filterFreq || 1000;
-    gain.connect(f);
-    f.connect(seGain);
-  } else {
-    gain.connect(seGain);
-  }
+    gain.connect(f); f.connect(seGain);
+  } else gain.connect(seGain);
   osc.start(t);
   osc.stop(t + (opts.dur || 0.1) + 0.02);
 }
@@ -123,11 +116,8 @@ function playNoise(opts) {
   const filter = audioCtx.createBiquadFilter();
   filter.type = opts.filter || "lowpass";
   filter.frequency.value = opts.filterFreq || 2000;
-  src.connect(filter);
-  filter.connect(gain);
-  gain.connect(seGain);
-  src.start(t);
-  src.stop(t + dur + 0.02);
+  src.connect(filter); filter.connect(gain); gain.connect(seGain);
+  src.start(t); src.stop(t + dur + 0.02);
 }
 
 const sfx = {
@@ -200,10 +190,8 @@ function playBGMNote(type, freq, duration, vol) {
   gain.gain.linearRampToValueAtTime(vol, t + 0.01);
   gain.gain.setValueAtTime(vol, t + duration - 0.02);
   gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
-  osc.connect(gain);
-  gain.connect(bgmGain);
-  osc.start(t);
-  osc.stop(t + duration + 0.02);
+  osc.connect(gain); gain.connect(bgmGain);
+  osc.start(t); osc.stop(t + duration + 0.02);
 }
 
 function playBGMDrum(type, vol) {
@@ -217,12 +205,11 @@ function playBGMDrum(type, vol) {
     osc.frequency.exponentialRampToValueAtTime(40, t + 0.12);
     gain.gain.setValueAtTime(vol, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
-    osc.connect(gain);
-    gain.connect(bgmGain);
-    osc.start(t);
-    osc.stop(t + 0.18);
-  } else if (type === "S") {
-    const bufferSize = Math.floor(audioCtx.sampleRate * 0.1);
+    osc.connect(gain); gain.connect(bgmGain);
+    osc.start(t); osc.stop(t + 0.18);
+  } else if (type === "S" || type === "H") {
+    const dur = type === "S" ? 0.1 : 0.05;
+    const bufferSize = Math.floor(audioCtx.sampleRate * dur);
     const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
@@ -230,46 +217,23 @@ function playBGMDrum(type, vol) {
     src.buffer = buffer;
     const filter = audioCtx.createBiquadFilter();
     filter.type = "highpass";
-    filter.frequency.value = 800;
+    filter.frequency.value = type === "S" ? 800 : 6000;
     const gain = audioCtx.createGain();
     gain.gain.setValueAtTime(vol, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
-    src.connect(filter);
-    filter.connect(gain);
-    gain.connect(bgmGain);
-    src.start(t);
-    src.stop(t + 0.15);
-  } else if (type === "H") {
-    const bufferSize = Math.floor(audioCtx.sampleRate * 0.05);
-    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-    const src = audioCtx.createBufferSource();
-    src.buffer = buffer;
-    const filter = audioCtx.createBiquadFilter();
-    filter.type = "highpass";
-    filter.frequency.value = 6000;
-    const gain = audioCtx.createGain();
-    gain.gain.setValueAtTime(vol, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-    src.connect(filter);
-    filter.connect(gain);
-    gain.connect(bgmGain);
-    src.start(t);
-    src.stop(t + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(filter); filter.connect(gain); gain.connect(bgmGain);
+    src.start(t); src.stop(t + dur + 0.02);
   }
 }
 
+let bgmNextStepTime = 0;
 function scheduleStep(step) {
   if (!audioCtx || !bgmGain) return;
   const s = step % 64;
   const bassNote = BGM_PATTERNS.bass[s];
   if (bassNote) playBGMNote("triangle", noteFreq(NOTE[bassNote]), BGM_STEP_DUR * 1.8, 0.18);
   const leadNote = BGM_PATTERNS.lead[s];
-  if (leadNote) {
-    const vol = (step % 128 < 64) ? 0.10 : 0.14;
-    playBGMNote("square", noteFreq(NOTE[leadNote]), BGM_STEP_DUR * 1.5, vol);
-  }
+  if (leadNote) playBGMNote("square", noteFreq(NOTE[leadNote]), BGM_STEP_DUR * 1.5, 0.10);
   const arpNote = BGM_PATTERNS.arp[s];
   if (arpNote) playBGMNote("sawtooth", noteFreq(NOTE[arpNote]), BGM_STEP_DUR * 0.8, 0.05);
   const drum = BGM_DRUMS[s];
@@ -278,12 +242,10 @@ function scheduleStep(step) {
   else if (drum === "H") playBGMDrum("H", 0.08);
 }
 
-let bgmNextStepTime = 0;
-const BGM_LOOKAHEAD = 0.1;
 function bgmScheduler() {
   if (!audioCtx || !bgmGain) return;
   const now = audioCtx.currentTime;
-  while (bgmNextStepTime < now + BGM_LOOKAHEAD) {
+  while (bgmNextStepTime < now + 0.1) {
     scheduleStep(bgmCurrentStep);
     bgmNextStepTime += BGM_STEP_DUR;
     bgmCurrentStep++;
@@ -299,70 +261,36 @@ function startBGM() {
   bgmCurrentStep = 0;
   bgmSchedulerId = setInterval(bgmScheduler, 25);
 }
-function stopBGM() {
-  if (bgmSchedulerId) clearInterval(bgmSchedulerId);
-  bgmSchedulerId = null;
-}
 
-function setBGMEnabled(v) {
-  bgmEnabled = v;
-  if (bgmGain) bgmGain.gain.value = bgmEnabled ? bgmVolume : 0;
-}
-function setSEEnabled(v) {
-  seEnabled = v;
-  if (seGain) seGain.gain.value = seEnabled ? seVolume : 0;
-}
-function setBGMVolume(v) {
-  bgmVolume = Math.max(0, Math.min(1, v));
-  if (bgmGain && bgmEnabled) bgmGain.gain.value = bgmVolume;
-}
-function setSEVolume(v) {
-  seVolume = Math.max(0, Math.min(1, v));
-  if (seGain && seEnabled) seGain.gain.value = seVolume;
-}
+function setBGMEnabled(v) { bgmEnabled = v; if (bgmGain) bgmGain.gain.value = bgmEnabled ? bgmVolume : 0; }
+function setSEEnabled(v) { seEnabled = v; if (seGain) seGain.gain.value = seEnabled ? seVolume : 0; }
+function setBGMVolume(v) { bgmVolume = Math.max(0, Math.min(1, v)); if (bgmGain && bgmEnabled) bgmGain.gain.value = bgmVolume; }
+function setSEVolume(v) { seVolume = Math.max(0, Math.min(1, v)); if (seGain && seEnabled) seGain.gain.value = seVolume; }
 
 /* ==================================================================
    ゲーム本体
 ================================================================== */
-
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 document.getElementById("loading").remove();
-
 const W = canvas.width;
 const H = canvas.height;
 const TAU = Math.PI * 2;
-
 const SAVE_KEY = "neonBulletSave_v1";
 
 function createDefaultSave() {
   return {
-    highScore: 0,
-    coins: 0,
-    totalCoinsEarned: 0,
+    highScore: 0, coins: 0, totalCoinsEarned: 0,
     ownedWeapons: ["normal", "spiral", "rapid", "knife", "mochi", "boomerang", "orbit", "lightning", "freeze", "shotgun", "missile", "flame", "spike", "swarm", "piano"],
     ownedSpecials: ["fireworks"],
-    weaponRecords: {},
-    totalClears: 0,
-    totalPlays: 0,
-    lastLoginDate: null,
-    loginStreak: 0,
-    dailyBonusClaimedDate: null,
+    weaponRecords: {}, totalClears: 0, totalPlays: 0,
+    lastLoginDate: null, loginStreak: 0, dailyBonusClaimedDate: null,
     ownedCosmetics: ["theme_default", "color_cyan"],
-    equippedTheme: "theme_default",
-    equippedColor: "color_cyan",
-    upgrades: {},
-    dailyMissions: null,
-    dailyMissionsDate: null,
-    missionProgress: {},
-    challengeRecords: {},
-    studyGrade: 1,
-    studyHighScore: 0,
-    studyClears: 0,
-    bgmVolume: 0.35,
-    seVolume: 0.5,
-    bgmEnabled: true,
-    seEnabled: true
+    equippedTheme: "theme_default", equippedColor: "color_cyan",
+    upgrades: {}, dailyMissions: null, dailyMissionsDate: null,
+    missionProgress: {}, challengeRecords: {},
+    studyGrade: 1, studyHighScore: 0, studyClears: 0,
+    bgmVolume: 0.35, seVolume: 0.5, bgmEnabled: true, seEnabled: true
   };
 }
 
@@ -377,16 +305,10 @@ function loadSave() {
       if (!saveData.weaponRecords) saveData.weaponRecords = {};
       if (!saveData.ownedWeapons) saveData.ownedWeapons = createDefaultSave().ownedWeapons;
       if (!saveData.ownedSpecials) saveData.ownedSpecials = createDefaultSave().ownedSpecials;
-      for (const k of createDefaultSave().ownedWeapons) {
-        if (!saveData.ownedWeapons.includes(k)) saveData.ownedWeapons.push(k);
-      }
-      for (const k of createDefaultSave().ownedSpecials) {
-        if (!saveData.ownedSpecials.includes(k)) saveData.ownedSpecials.push(k);
-      }
+      for (const k of createDefaultSave().ownedWeapons) if (!saveData.ownedWeapons.includes(k)) saveData.ownedWeapons.push(k);
+      for (const k of createDefaultSave().ownedSpecials) if (!saveData.ownedSpecials.includes(k)) saveData.ownedSpecials.push(k);
       if (!saveData.ownedCosmetics) saveData.ownedCosmetics = createDefaultSave().ownedCosmetics;
-      for (const k of createDefaultSave().ownedCosmetics) {
-        if (!saveData.ownedCosmetics.includes(k)) saveData.ownedCosmetics.push(k);
-      }
+      for (const k of createDefaultSave().ownedCosmetics) if (!saveData.ownedCosmetics.includes(k)) saveData.ownedCosmetics.push(k);
       if (!saveData.equippedTheme) saveData.equippedTheme = "theme_default";
       if (!saveData.equippedColor) saveData.equippedColor = "color_cyan";
       if (!saveData.upgrades) saveData.upgrades = {};
@@ -401,42 +323,17 @@ function loadSave() {
       if (typeof saveData.seEnabled !== "boolean") saveData.seEnabled = true;
       saveData.ownedWeapons = saveData.ownedWeapons.filter(k => k !== "math");
     }
-  } catch (e) {
-    saveData = createDefaultSave();
-  }
+  } catch (e) { saveData = createDefaultSave(); }
 }
-function writeSave() {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(saveData)); } catch {}
-}
+function writeSave() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(saveData)); } catch {} }
 function getWeaponRecord(key) {
   if (!saveData.weaponRecords[key]) {
-    saveData.weaponRecords[key] = {
-      cleared: false, clearCount: 0,
-      highScore: 0, maxLevel: 1, maxCombo: 0, maxWave: 1
-    };
+    saveData.weaponRecords[key] = { cleared: false, clearCount: 0, highScore: 0, maxLevel: 1, maxCombo: 0, maxWave: 1 };
   }
   return saveData.weaponRecords[key];
 }
 function ownsWeapon(key) { return saveData.ownedWeapons.includes(key); }
 function ownsSpecial(key) { return saveData.ownedSpecials.includes(key); }
-function buyWeapon(key) {
-  const price = getWeaponPrice(key);
-  if (ownsWeapon(key)) return false;
-  if (saveData.coins < price) return false;
-  saveData.coins -= price;
-  saveData.ownedWeapons.push(key);
-  writeSave();
-  return true;
-}
-function buySpecial(key) {
-  const price = getSpecialPrice(key);
-  if (ownsSpecial(key)) return false;
-  if (saveData.coins < price) return false;
-  saveData.coins -= price;
-  saveData.ownedSpecials.push(key);
-  writeSave();
-  return true;
-}
 
 loadSave();
 let highScore = saveData.highScore || 0;
@@ -446,23 +343,18 @@ bgmEnabled = saveData.bgmEnabled;
 seEnabled = saveData.seEnabled;
 
 const UPGRADES = {
-  maxhp:      { name: "最大HP +10",       description: "最大HPが10増える",            color: "#00ff66", basePrice: 200, maxLevel: 10, step: 10 },
-  speed:      { name: "移動速度 +5%",     description: "移動速度が5%上がる",          color: "#00ffcc", basePrice: 250, maxLevel: 8,  step: 0.05 },
-  startlevel: { name: "初期レベル +1",    description: "開始時のレベルが1上がる",     color: "#ffcc00", basePrice: 300, maxLevel: 5,  step: 1 },
-  coinrate:   { name: "コイン獲得 +10%",  description: "獲得コインが10%増える",       color: "#ffd700", basePrice: 400, maxLevel: 8,  step: 0.10 },
-  gauge:      { name: "必殺ゲージ +15%",  description: "必殺ゲージの溜まりが15%UP",   color: "#ff88ff", basePrice: 350, maxLevel: 6,  step: 0.15 },
-  defense:    { name: "被ダメ -5%",       description: "受けるダメージが5%減る",      color: "#66ccff", basePrice: 300, maxLevel: 8,  step: 0.05 },
-  invincible: { name: "無敵時間 +20f",    description: "被弾後の無敵時間が伸びる",     color: "#ffffff", basePrice: 200, maxLevel: 6,  step: 20 },
-  dashcd:     { name: "ダッシュCD -8%",   description: "ダッシュのクールダウン短縮",   color: "#ff6600", basePrice: 250, maxLevel: 6,  step: 0.08 }
+  maxhp:      { name: "最大HP +10",       description: "最大HPが10増える",        color: "#00ff66", basePrice: 200, maxLevel: 10, step: 10 },
+  speed:      { name: "移動速度 +5%",     description: "移動速度が5%上がる",      color: "#00ffcc", basePrice: 250, maxLevel: 8,  step: 0.05 },
+  startlevel: { name: "初期レベル +1",    description: "開始時のレベルが1上がる", color: "#ffcc00", basePrice: 300, maxLevel: 5,  step: 1 },
+  coinrate:   { name: "コイン獲得 +10%",  description: "獲得コインが10%増える",   color: "#ffd700", basePrice: 400, maxLevel: 8,  step: 0.10 },
+  gauge:      { name: "必殺ゲージ +15%",  description: "必殺ゲージの溜まりUP",    color: "#ff88ff", basePrice: 350, maxLevel: 6,  step: 0.15 },
+  defense:    { name: "被ダメ -5%",       description: "受けるダメージが5%減る",  color: "#66ccff", basePrice: 300, maxLevel: 8,  step: 0.05 },
+  invincible: { name: "無敵時間 +20f",    description: "被弾後の無敵時間UP",      color: "#ffffff", basePrice: 200, maxLevel: 6,  step: 20 },
+  dashcd:     { name: "ダッシュCD -8%",   description: "ダッシュCD短縮",          color: "#ff6600", basePrice: 250, maxLevel: 6,  step: 0.08 }
 };
 const UPGRADE_ORDER = Object.keys(UPGRADES);
-
 function getUpgradeLevel(key) { return (saveData.upgrades && saveData.upgrades[key]) || 0; }
-function getUpgradePrice(key) {
-  const u = UPGRADES[key];
-  const lv = getUpgradeLevel(key);
-  return Math.floor(u.basePrice * Math.pow(1.6, lv));
-}
+function getUpgradePrice(key) { return Math.floor(UPGRADES[key].basePrice * Math.pow(1.6, getUpgradeLevel(key))); }
 function isUpgradeMaxed(key) { return getUpgradeLevel(key) >= UPGRADES[key].maxLevel; }
 function buyUpgrade(key) {
   if (isUpgradeMaxed(key)) return false;
@@ -471,10 +363,8 @@ function buyUpgrade(key) {
   saveData.coins -= price;
   if (!saveData.upgrades) saveData.upgrades = {};
   saveData.upgrades[key] = getUpgradeLevel(key) + 1;
-  writeSave();
-  return true;
+  writeSave(); return true;
 }
-
 function getMaxHpBonus() { return getUpgradeLevel("maxhp") * UPGRADES.maxhp.step; }
 function getSpeedMult() { return 1 + getUpgradeLevel("speed") * UPGRADES.speed.step; }
 function getStartLevelBonus() { return getUpgradeLevel("startlevel") * UPGRADES.startlevel.step; }
@@ -484,28 +374,26 @@ function getDefenseMult() { return 1 - getUpgradeLevel("defense") * UPGRADES.def
 function getInvincibleBonus() { return getUpgradeLevel("invincible") * UPGRADES.invincible.step; }
 function getDashCdMult() { return 1 - getUpgradeLevel("dashcd") * UPGRADES.dashcd.step; }
 
-let dailyBonusAvailable = false;
-let dailyBonusAmount = 0;
-let dailyBonusStreakDisplay = 1;
-let showDailyBonusPopup = false;
-const DAILY_BONUS_TABLE = [50, 70, 90, 120, 150, 200, 300];
+/* ============ 日付系 ============ */
 function todayStr() {
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
 }
 function yesterdayStr() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
+  const d = new Date(); d.setDate(d.getDate() - 1);
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
 }
+let dailyBonusAvailable = false;
+let dailyBonusAmount = 0;
+let dailyBonusStreakDisplay = 1;
+let showDailyBonusPopup = false;
+const DAILY_BONUS_TABLE = [50, 70, 90, 120, 150, 200, 300];
 function checkDailyBonus() {
   const today = todayStr();
   if (saveData.dailyBonusClaimedDate === today) { dailyBonusAvailable = false; return; }
   if (saveData.lastLoginDate === yesterdayStr()) {
     dailyBonusStreakDisplay = Math.min(7, (saveData.loginStreak || 0) + 1);
-  } else {
-    dailyBonusStreakDisplay = 1;
-  }
+  } else dailyBonusStreakDisplay = 1;
   dailyBonusAmount = DAILY_BONUS_TABLE[dailyBonusStreakDisplay - 1];
   dailyBonusAvailable = true;
   showDailyBonusPopup = true;
@@ -519,34 +407,31 @@ function claimDailyBonus() {
   saveData.lastLoginDate = today;
   saveData.dailyBonusClaimedDate = today;
   writeSave();
-  dailyBonusAvailable = false;
-  showDailyBonusPopup = false;
-  sfx.coin();
-  shake(20); flash("#ffd700", 8); chroma(8);
-  burst(W/2, H/2, 80, "#ffd700");
-  burst(W/2, H/2, 40, "#ffffff");
+  dailyBonusAvailable = false; showDailyBonusPopup = false;
+  sfx.coin(); shake(20); flash("#ffd700", 8); chroma(8);
+  burst(W/2, H/2, 80, "#ffd700"); burst(W/2, H/2, 40, "#ffffff");
 }
 
+/* ============ ミッション ============ */
 const MISSION_POOL = [
-  { id: "kill50",   name: "敵を50体倒す",         target: 50,  reward: 80,  stat: "kills" },
-  { id: "kill100",  name: "敵を100体倒す",        target: 100, reward: 150, stat: "kills" },
-  { id: "kill200",  name: "敵を200体倒す",        target: 200, reward: 300, stat: "kills" },
-  { id: "combo20",  name: "コンボ20を達成",       target: 1,   reward: 120, stat: "combo20" },
-  { id: "combo30",  name: "コンボ30を達成",       target: 1,   reward: 200, stat: "combo30" },
-  { id: "wave5",    name: "WAVE 5 に到達",        target: 1,   reward: 120, stat: "wave5" },
-  { id: "boss1",    name: "ボスを1体倒す",        target: 1,   reward: 200, stat: "boss1" },
-  { id: "boss2",    name: "ボスを2体倒す",        target: 1,   reward: 400, stat: "boss2" },
-  { id: "level10",  name: "レベル10に到達",       target: 1,   reward: 100, stat: "level10" },
-  { id: "level15",  name: "レベル15に到達",       target: 1,   reward: 200, stat: "level15" },
-  { id: "clear",    name: "ゲームを1回クリア",    target: 1,   reward: 500, stat: "clear" },
-  { id: "play3",    name: "3回プレイする",        target: 3,   reward: 100, stat: "plays" },
-  { id: "score5000",name: "スコア5000達成",       target: 1,   reward: 150, stat: "score5000" },
-  { id: "score10000",name: "スコア10000達成",     target: 1,   reward: 300, stat: "score10000" }
+  { id: "kill50",   name: "敵を50体倒す",    target: 50,  reward: 80,  stat: "kills" },
+  { id: "kill100",  name: "敵を100体倒す",   target: 100, reward: 150, stat: "kills" },
+  { id: "kill200",  name: "敵を200体倒す",   target: 200, reward: 300, stat: "kills" },
+  { id: "combo20",  name: "コンボ20を達成",  target: 1,   reward: 120, stat: "combo20" },
+  { id: "combo30",  name: "コンボ30を達成",  target: 1,   reward: 200, stat: "combo30" },
+  { id: "wave5",    name: "WAVE 5 に到達",   target: 1,   reward: 120, stat: "wave5" },
+  { id: "boss1",    name: "ボスを1体倒す",   target: 1,   reward: 200, stat: "boss1" },
+  { id: "boss2",    name: "ボスを2体倒す",   target: 1,   reward: 400, stat: "boss2" },
+  { id: "level10",  name: "レベル10に到達",  target: 1,   reward: 100, stat: "level10" },
+  { id: "level15",  name: "レベル15に到達",  target: 1,   reward: 200, stat: "level15" },
+  { id: "clear",    name: "ゲームを1回クリア", target: 1, reward: 500, stat: "clear" },
+  { id: "play3",    name: "3回プレイする",   target: 3,   reward: 100, stat: "plays" },
+  { id: "score5000",name: "スコア5000達成",  target: 1,   reward: 150, stat: "score5000" },
+  { id: "score10000",name:"スコア10000達成", target: 1,   reward: 300, stat: "score10000" }
 ];
 let dailyMissions = [];
 let missionProgress = {};
 let missionSession = { kills: 0, plays: 0, maxCombo: 0, maxWave: 0, maxLevel: 1, bossKills: 0, maxScore: 0, cleared: false };
-
 function pickDailyMissions() {
   const pool = MISSION_POOL.slice();
   const picked = [];
@@ -603,33 +488,25 @@ function claimMissionReward(idx) {
   saveData.coins = (saveData.coins || 0) + m.reward;
   saveData.totalCoinsEarned = (saveData.totalCoinsEarned || 0) + m.reward;
   saveData.dailyMissions = dailyMissions;
-  writeSave();
-  sfx.coin();
-  return true;
+  writeSave(); sfx.coin(); return true;
 }
 
+/* ============ 縛り ============ */
 const CHALLENGES = {
-  oneHit:      { name: "一撃死",             description: "被弾1回でゲームオーバー",             color: "#ff0044", reward: 500 },
-  halfHp:      { name: "HP半分スタート",     description: "最大HPの半分で開始",                 color: "#ff88cc", reward: 250 },
-  doubleBullet:{ name: "敵弾2倍",            description: "敵の弾の数が2倍",                    color: "#ff00ff", reward: 400 },
-  fastEnemy:   { name: "高速敵",             description: "敵の移動速度1.5倍",                  color: "#00eeff", reward: 350 },
-  noSpecials:  { name: "必殺技禁止",         description: "必殺技が使えない",                    color: "#aaaaaa", reward: 300 },
-  glass:       { name: "グラスキャノン",     description: "HP1固定（一撃死＋初期HP1）",         color: "#ffffff", reward: 600 },
-  enemyRush:   { name: "敵増量",             description: "敵の出現数が2倍",                    color: "#ff6600", reward: 450 },
-  bossRush:    { name: "ボス強化",           description: "ボスのHPが2倍",                      color: "#cc0044", reward: 500 }
+  oneHit:      { name: "一撃死",         description: "被弾1回でゲームオーバー", color: "#ff0044", reward: 500 },
+  halfHp:      { name: "HP半分スタート", description: "最大HPの半分で開始",     color: "#ff88cc", reward: 250 },
+  doubleBullet:{ name: "敵弾2倍",        description: "敵の弾の数が2倍",        color: "#ff00ff", reward: 400 },
+  fastEnemy:   { name: "高速敵",         description: "敵の移動速度1.5倍",      color: "#00eeff", reward: 350 },
+  noSpecials:  { name: "必殺技禁止",     description: "必殺技が使えない",       color: "#aaaaaa", reward: 300 },
+  glass:       { name: "グラスキャノン", description: "HP1固定",               color: "#ffffff", reward: 600 },
+  enemyRush:   { name: "敵増量",         description: "敵の出現数が2倍",        color: "#ff6600", reward: 450 },
+  bossRush:    { name: "ボス強化",       description: "ボスのHPが2倍",          color: "#cc0044", reward: 500 }
 };
 const CHALLENGE_ORDER = Object.keys(CHALLENGES);
-
 let selectedChallenge = null;
-let challengeOneHit = false;
-let challengeHalfHp = false;
-let challengeDoubleBullet = false;
-let challengeFastEnemy = false;
-let challengeNoSpecials = false;
-let challengeGlass = false;
-let challengeEnemyRush = false;
-let challengeBossRush = false;
-
+let challengeOneHit = false, challengeHalfHp = false, challengeDoubleBullet = false;
+let challengeFastEnemy = false, challengeNoSpecials = false, challengeGlass = false;
+let challengeEnemyRush = false, challengeBossRush = false;
 function applyChallenge(key) {
   selectedChallenge = key;
   challengeOneHit = key === "oneHit" || key === "glass";
@@ -642,6 +519,7 @@ function applyChallenge(key) {
   challengeBossRush = key === "bossRush";
 }
 
+/* ============ スタディ ============ */
 let studyMode = false;
 let studyGrade = saveData.studyGrade || 1;
 let studySelectScreen = false;
@@ -657,17 +535,13 @@ const STUDY_BURST_MAX = 100;
 
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 function pickWrongs(answer, count, range) {
-  const set = new Set([answer]);
-  const wrongs = [];
+  const set = new Set([answer]); const wrongs = [];
   let safety = 0;
   while (wrongs.length < count && safety < 200) {
     safety++;
     let w = answer + randInt(-range, range);
     if (w === 0 && answer !== 0) w += 1;
-    if (w !== answer && !set.has(w)) {
-      set.add(w);
-      wrongs.push(w);
-    }
+    if (w !== answer && !set.has(w)) { set.add(w); wrongs.push(w); }
   }
   while (wrongs.length < count) wrongs.push(answer + (wrongs.length + 1) * 7);
   return wrongs;
@@ -679,79 +553,47 @@ function shuffle(arr) {
   }
   return arr;
 }
-
 function generateQuizGrade1() {
   const type = Math.floor(Math.random() * 3);
   if (type === 0) {
-    const a = randInt(2, 12);
-    const b = randInt(1, 15);
+    const a = randInt(2, 12), b = randInt(1, 15);
     const minus = Math.random() < 0.5;
     const answer = minus ? (-a) - b : (-a) + b;
-    const expr = `(-${a}) ${minus ? "-" : "+"} ${b}`;
-    const wrongs = pickWrongs(answer, 3, 5);
-    return { text: `${expr} = ?`, choices: shuffle([answer, ...wrongs]), answer };
+    return { text: `(-${a}) ${minus ? "-" : "+"} ${b} = ?`, choices: shuffle([answer, ...pickWrongs(answer, 3, 5)]), answer };
   } else if (type === 1) {
-    const a = randInt(2, 6);
-    const x = randInt(-8, 8);
-    const b = randInt(-15, 15);
-    const c = a * x + b;
+    const a = randInt(2, 6), x = randInt(-8, 8), b = randInt(-15, 15), c = a * x + b;
     const sign = b >= 0 ? `+ ${b}` : `- ${Math.abs(b)}`;
-    const wrongs = pickWrongs(x, 3, 4);
-    return { text: `${a}x ${sign} = ${c}\n x = ?`, choices: shuffle([x, ...wrongs]), answer: x };
+    return { text: `${a}x ${sign} = ${c}\n x = ?`, choices: shuffle([x, ...pickWrongs(x, 3, 4)]), answer: x };
   } else {
-    const a = randInt(2, 9);
-    const b = randInt(2, 9);
-    const answer = a + b;
-    const wrongs = pickWrongs(answer, 3, 4);
-    return { text: `${a}x + ${b}x = ?\n xの係数は？`, choices: shuffle([answer, ...wrongs]), answer, suffix: "x" };
+    const a = randInt(2, 9), b = randInt(2, 9), answer = a + b;
+    return { text: `${a}x + ${b}x = ?\n xの係数は？`, choices: shuffle([answer, ...pickWrongs(answer, 3, 4)]), answer };
   }
 }
 function generateQuizGrade2() {
   const type = Math.floor(Math.random() * 3);
   if (type === 0) {
-    const x = randInt(1, 9);
-    const y = randInt(1, 9);
-    const s = x + y;
-    const d = x - y;
-    const wrongs = pickWrongs(x, 3, 3);
-    return { text: `x + y = ${s}\nx - y = ${d}\n x = ?`, choices: shuffle([x, ...wrongs]), answer: x };
+    const x = randInt(1, 9), y = randInt(1, 9);
+    return { text: `x + y = ${x+y}\nx - y = ${x-y}\n x = ?`, choices: shuffle([x, ...pickWrongs(x, 3, 3)]), answer: x };
   } else if (type === 1) {
-    const a = randInt(2, 5);
-    const x = randInt(1, 6);
-    const y = randInt(1, 9);
-    const c = a * x + y;
-    const wrongs = pickWrongs(y, 3, 4);
-    return { text: `${a}x + y = ${c}\n x = ${x} のとき y = ?`, choices: shuffle([y, ...wrongs]), answer: y };
+    const a = randInt(2, 5), x = randInt(1, 6), y = randInt(1, 9), c = a * x + y;
+    return { text: `${a}x + y = ${c}\n x = ${x} のとき y = ?`, choices: shuffle([y, ...pickWrongs(y, 3, 4)]), answer: y };
   } else {
-    const a = randInt(2, 5);
-    const b = randInt(-8, 8);
-    const x = randInt(-5, 7);
-    const y = a * x + b;
+    const a = randInt(2, 5), b = randInt(-8, 8), x = randInt(-5, 7), y = a * x + b;
     const sign = b >= 0 ? `+ ${b}` : `- ${Math.abs(b)}`;
-    const wrongs = pickWrongs(y, 3, 6);
-    return { text: `y = ${a}x ${sign}\n x = ${x} のとき y = ?`, choices: shuffle([y, ...wrongs]), answer: y };
+    return { text: `y = ${a}x ${sign}\n x = ${x} のとき y = ?`, choices: shuffle([y, ...pickWrongs(y, 3, 6)]), answer: y };
   }
 }
 function generateQuizGrade3() {
   const type = Math.floor(Math.random() * 3);
   if (type === 0) {
-    const a = randInt(1, 9);
-    const b = randInt(1, 9);
-    const answer = a + b;
-    const wrongs = pickWrongs(answer, 3, 4);
-    return { text: `(x + ${a})(x + ${b})\n x の係数は？`, choices: shuffle([answer, ...wrongs]), answer };
+    const a = randInt(1, 9), b = randInt(1, 9), answer = a + b;
+    return { text: `(x + ${a})(x + ${b})\n x の係数は？`, choices: shuffle([answer, ...pickWrongs(answer, 3, 4)]), answer };
   } else if (type === 1) {
-    const a = randInt(1, 9);
-    const b = randInt(1, 9);
-    const answer = a * b;
-    const wrongs = pickWrongs(answer, 3, Math.max(5, Math.floor(answer/2)));
-    return { text: `x² + ${a+b}x + ${a*b}\n = (x + ${a})(x + ?)`, choices: shuffle([b, ...wrongs]), answer: b };
+    const a = randInt(1, 9), b = randInt(1, 9), answer = a * b;
+    return { text: `x² + ${a+b}x + ${a*b}\n = (x + ${a})(x + ?)`, choices: shuffle([b, ...pickWrongs(answer, 3, Math.max(5, Math.floor(answer/2)))]), answer: b };
   } else {
-    const a = randInt(1, 8);
-    const b = randInt(1, 8);
-    const answer = Math.max(a, b);
-    const wrongs = pickWrongs(answer, 3, 4);
-    return { text: `x² - ${a+b}x + ${a*b} = 0\n 大きい方の解は？`, choices: shuffle([answer, ...wrongs]), answer };
+    const a = randInt(1, 8), b = randInt(1, 8), answer = Math.max(a, b);
+    return { text: `x² - ${a+b}x + ${a*b} = 0\n 大きい方の解は？`, choices: shuffle([answer, ...pickWrongs(answer, 3, 4)]), answer };
   }
 }
 function generateQuiz() {
@@ -759,7 +601,6 @@ function generateQuiz() {
   if (studyGrade === 2) return generateQuizGrade2();
   return generateQuizGrade3();
 }
-
 function startStudyQuiz() {
   studyQuiz = generateQuiz();
   studyQuizActive = true;
@@ -774,12 +615,9 @@ function answerStudyQuiz(idx) {
     studyCorrectCount++;
     studyBurstGauge = Math.min(STUDY_BURST_MAX, studyBurstGauge + 25);
     flash("#88ff88", 15); chroma(25); shake(40);
-    level++;
-    nextExp += 8;
+    level++; nextExp += 8;
     player.hp = Math.min(player.maxHp, player.hp + 20);
     burst(player.x, player.y, 80, "#88ff88");
-    burst(player.x, player.y, 40, "#ffffff");
-    burst(player.x, player.y, 30, "#ffd700");
     showBigDamage(player.x, player.y - 50, "LEVEL UP!", "#88ff88");
     showDamage(player.x, player.y - 80, `正解: ${studyCorrectCount}`, "#ffffff");
   } else {
@@ -787,44 +625,37 @@ function answerStudyQuiz(idx) {
     flash("#ff6666", 10); chroma(15); shake(20);
     showDamage(player.x, player.y - 60, "残念！", "#ff6666");
   }
-  studyQuizActive = false;
-  studyQuiz = null;
-  studyTimer = studyTimerMax;
+  studyQuizActive = false; studyQuiz = null; studyTimer = studyTimerMax;
 }
 
+/* ============ 主要状態変数 ============ */
 let bossKillCount = 0;
 const BOSS_KILL_TARGET = 2;
 let gameClear = false;
-
 let fusionMode = false;
 let fusionSelected = [];
 let activeWeapons = [];
 let quickMode = false;
 let weaponCools = {};
-
 let specialGauge = 0;
 const SPECIAL_MAX = 100;
 let specialActive = 0;
 let specialParticles = [];
 let specialFireworks = [];
-
 let selectedSpecial = "fireworks";
 let kingCrimsonTimer = 0;
 let stickyFingersTimer = 0;
 let stickyFingersTarget = null;
 let gerTimer = 0;
 let whiteSnakeTimer = 0;
-
 let theWorldTimer = 0;
 let mudaRushTimer = 0;
 let mudaRushEnemy = null;
 let madeInHeavenTimer = 0;
-
 let determinationActive = 0;
 let boneBarriers = [];
 let gasterBlasters = [];
 let blueAttacks = [];
-
 let pauseScreen = false;
 let pauseBackToTitleConfirm = false;
 let settingsScreen = false;
@@ -832,46 +663,31 @@ let settingsScreen = false;
 const SPECIAL_BTN_R = 40;
 const SPECIAL_BTN_X = W - SPECIAL_BTN_R - 20;
 const SPECIAL_BTN_Y = H - SPECIAL_BTN_R - 20;
-
 const PAUSE_BTN_R = 22;
 const PAUSE_BTN_X = W - PAUSE_BTN_R - 12;
 const PAUSE_BTN_Y = 20 + 16 + 8 + 22;
-
 const MUTE_BTN_R = 18;
 const MUTE_BTN_X = 20 + MUTE_BTN_R;
 const MUTE_BTN_Y = 230;
 
 const player = {
-  x: W/2, y: H-120,
-  r: 8, hitR: 8, drawR: 12,
+  x: W/2, y: H-120, r: 8, hitR: 8, drawR: 12,
   hp: 50, maxHp: 50, cool: 0, invincible: 0,
   dashTimer: 0, dashCooldown: 0, dashVx: 0, dashVy: 0
 };
 
 let score = 0, level = 1, exp = 0, nextExp = 6, time = 0, difficulty = 1;
 let titleScreen = true, weaponMenu = true, specialMenu = false, shopScreen = false, gameOver = false;
-let missionScreen = false;
-let challengeScreen = false;
+let missionScreen = false, challengeScreen = false;
 let selectedWeapon = null, rainbowHue = 0;
 let combo = 0, comboTimer = 0, maxCombo = 0;
 let wave = 1, waveTimer = 0, bossActive = false;
-
-let screenShake = 0;
-let shakeX = 0, shakeY = 0;
-let hitStop = 0;
-let flashScreen = 0;
-let flashColor = "#ffffff";
-let chromaOffset = 0;
-let bgTint = 0;
-let dangerTint = 0;
-let beatPulse = 0;
-let zoomPulse = 1;
+let screenShake = 0, shakeX = 0, shakeY = 0, hitStop = 0;
+let flashScreen = 0, flashColor = "#ffffff", chromaOffset = 0;
+let bgTint = 0, dangerTint = 0, beatPulse = 0, zoomPulse = 1;
 
 let fxMode = "chaos";
-const FX = {
-  shakeMultiplier: 1, particleMultiplier: 1, flashMultiplier: 1,
-  chromaMultiplier: 1, bgMultiplier: 1, constantShake: 0.5, hitStopMultiplier: 1
-};
+const FX = { shakeMultiplier: 1, particleMultiplier: 1, flashMultiplier: 1, chromaMultiplier: 1, bgMultiplier: 1, constantShake: 0.5, hitStopMultiplier: 1 };
 function applyFxMode() {
   if (fxMode === "safe") {
     FX.shakeMultiplier = 0.15; FX.particleMultiplier = 0.15; FX.flashMultiplier = 0.1;
@@ -886,29 +702,22 @@ function applyFxMode() {
 }
 applyFxMode();
 
-let damageNumbers = [];
-let powerups = [];
-let powerUpFlash = null;
-let afterImages = [];
+let damageNumbers = [], powerups = [], afterImages = [];
 const WAVE_DURATION = 900;
-
 let rapidTimer = 0, rapidCooldown = 0;
 const RAPID_ACTIVE_TIME = 120, RAPID_COOLDOWN_TIME = 180;
 let knifeAngle = -Math.PI/2, knifeTouchMode = null;
-let orbitAngle = 0, lightningBolts = [], turrets = [];
-let mines = [];
+let orbitAngle = 0, lightningBolts = [], turrets = [], mines = [];
 let swordAngle = -Math.PI/2;
 let vampireHeal = 0;
-
 let weaponPower = {};
-
 let bullets = [], enemies = [], enemyBullets = [];
 let particles = [], shockwaves = [], stars = [];
-let shootingStars = [];
-let nebulae = [];
-let auroraBands = [];
-let themeParticles = [];
+let shootingStars = [], nebulae = [], auroraBands = [], themeParticles = [];
 
+/* ==================================================================
+   ここから武器定義（超長い）
+================================================================== */
 const weapons = {
   normal:    { name:"NORMAL GUN",      description:"レベルごとに弾+1",       color:"#00ffcc", price:0 },
   spiral:    { name:"EXPLOSIVE SHELL", description:"非追尾・高威力爆風",     color:"#cc66ff", price:0 },
@@ -925,7 +734,6 @@ const weapons = {
   spike:     { name:"SPIKE",           description:"地面から棘",             color:"#aabbbb", price:0 },
   swarm:     { name:"SWARM",           description:"蜂の群れミサイル",       color:"#ffcc00", price:0 },
   piano:     { name:"PIANO",           description:"音符が敵を追尾",         color:"#ffffff", price:0 },
-
   blackhole: { name:"BLACK HOLE",      description:"吸引＋圧縮",             color:"#9b59ff", price:400 },
   turret:    { name:"SENTRY TURRET",   description:"自動タレット",           color:"#ff9955", price:300 },
   laser:     { name:"LASER BEAM",      description:"極太貫通ビーム",         color:"#ff00ff", price:350 },
@@ -954,23 +762,21 @@ const weapons = {
   tornado:   { name:"TORNADO",         description:"敵を巻き込む竜巻",       color:"#ccccff", price:450 },
   cactus:    { name:"CACTUS",          description:"針を撒く設置",           color:"#33aa33", price:250 },
   umbrella:  { name:"UMBRELLA",        description:"全方位反撃＋無敵",       color:"#ff88cc", price:400 },
-
-  oraora:      { name:"ORA ORA",        description:"拳のラッシュ",           color:"#9966ff", price:800 },
-  mudamuda:    { name:"MUDA MUDA",      description:"黄金の拳ラッシュ",       color:"#ffcc00", price:1200 },
-  starplatinum:{ name:"STAR PLATINUM",  description:"超精密貫通射撃",         color:"#8844ff", price:1000 },
-  crazydiamond:{ name:"CRAZY DIAMOND",  description:"往復する高威力弾",       color:"#66aaff", price:900 },
-  goldexperience:{name:"GOLD EXPERIENCE",description:"老化光線・高威力",     color:"#ffdd44", price:900 },
-  killerqueen: { name:"KILLER QUEEN",   description:"爆弾化＋大爆発",         color:"#ff66aa", price:1100 },
-  madeinheaven:{ name:"MADE IN HEAVEN", description:"超加速連射UP",           color:"#ffffff", price:2000 },
-  goldenwind:  { name:"GOLDEN WIND",    description:"全方位＋HP回復",         color:"#ffcc44", price:1000 },
-
-  friendship:  { name:"KNIFE OF FRIENDSHIP", description:"友のナイフ・高火力",  color:"#ff66ff", price:800 },
-  bonebarrier: { name:"BONE BARRIER",   description:"骨の壁を設置・貫通",     color:"#eeeeee", price:700 },
-  greenfire:   { name:"GREEN FIREBALL", description:"緑の炎・追尾爆発",       color:"#44ff44", price:700 },
-  blueattack:  { name:"BLUE ATTACK",    description:"動かないと大ダメージ",   color:"#4488ff", price:800 },
-  gaster:      { name:"GASTER BLASTER", description:"頭蓋砲・超高火力",       color:"#ffffff", price:1800 },
-  heartbreak:  { name:"HEART BREAK",    description:"決意の刃・大ダメージ",   color:"#ff0044", price:1000 },
-  determination:{name:"DETERMINATION",  description:"決意・被弾無効化",       color:"#ff0000", price:1500 }
+  oraora:      { name:"ORA ORA",        description:"拳のラッシュ",       color:"#9966ff", price:800 },
+  mudamuda:    { name:"MUDA MUDA",      description:"黄金の拳ラッシュ",   color:"#ffcc00", price:1200 },
+  starplatinum:{ name:"STAR PLATINUM",  description:"超精密貫通射撃",     color:"#8844ff", price:1000 },
+  crazydiamond:{ name:"CRAZY DIAMOND",  description:"往復する高威力弾",   color:"#66aaff", price:900 },
+  goldexperience:{name:"GOLD EXPERIENCE",description:"老化光線・高威力",  color:"#ffdd44", price:900 },
+  killerqueen: { name:"KILLER QUEEN",   description:"爆弾化＋大爆発",     color:"#ff66aa", price:1100 },
+  madeinheaven:{ name:"MADE IN HEAVEN", description:"超加速連射UP",       color:"#ffffff", price:2000 },
+  goldenwind:  { name:"GOLDEN WIND",    description:"全方位＋HP回復",     color:"#ffcc44", price:1000 },
+  friendship:  { name:"KNIFE OF FRIENDSHIP", description:"友のナイフ・高火力", color:"#ff66ff", price:800 },
+  bonebarrier: { name:"BONE BARRIER",   description:"骨の壁を設置・貫通", color:"#eeeeee", price:700 },
+  greenfire:   { name:"GREEN FIREBALL", description:"緑の炎・追尾爆発",   color:"#44ff44", price:700 },
+  blueattack:  { name:"BLUE ATTACK",    description:"動かないと大ダメージ", color:"#4488ff", price:800 },
+  gaster:      { name:"GASTER BLASTER", description:"頭蓋砲・超高火力",   color:"#ffffff", price:1800 },
+  heartbreak:  { name:"HEART BREAK",    description:"決意の刃・大ダメージ", color:"#ff0044", price:1000 },
+  determination:{name:"DETERMINATION",  description:"決意・被弾無効化",   color:"#ff0000", price:1500 }
 };
 const WEAPON_ORDER = Object.keys(weapons);
 
@@ -992,7 +798,6 @@ const specials = {
   knowledgeburst: { name: "KNOWLEDGE BURST", description: "知識の爆発・全画面攻撃", color: "#66ccff", price: 0 }
 };
 const SPECIAL_ORDER = Object.keys(specials);
-
 function getWeaponPrice(key) { return weapons[key] ? (weapons[key].price || 0) * 2 : 0; }
 function getSpecialPrice(key) { return specials[key] ? (specials[key].price || 0) : 0; }
 function isFreeWeapon(key) { return getWeaponPrice(key) === 0; }
@@ -1002,7 +807,24 @@ function getShopSpecials() { return SPECIAL_ORDER.filter(k => !isFreeSpecial(k) 
 function getAvailableWeapons() { return WEAPON_ORDER.filter(k => ownsWeapon(k)); }
 function getAvailableSpecials() { return SPECIAL_ORDER.filter(k => ownsSpecial(k)); }
 function isPowerThreshold(lv) { return lv > 0 && lv % 3 === 0; }
+function buyWeapon(key) {
+  const price = getWeaponPrice(key);
+  if (ownsWeapon(key)) return false;
+  if (saveData.coins < price) return false;
+  saveData.coins -= price;
+  saveData.ownedWeapons.push(key);
+  writeSave(); return true;
+}
+function buySpecial(key) {
+  const price = getSpecialPrice(key);
+  if (ownsSpecial(key)) return false;
+  if (saveData.coins < price) return false;
+  saveData.coins -= price;
+  saveData.ownedSpecials.push(key);
+  writeSave(); return true;
+}
 
+/* ============ 見た目 ============ */
 const cosmetics = {
   theme_default: { name:"デフォルト空間",   description:"星空・シアン基調（初期）",   color:"#00ffcc", price:0,   kind:"theme" },
   theme_sakura:  { name:"桜テーマ",         description:"桜色に染まる夜空",           color:"#ff8fd0", price:400, kind:"theme" },
@@ -1028,8 +850,7 @@ function buyCosmetic(key) {
   if (saveData.coins < price) return false;
   saveData.coins -= price;
   saveData.ownedCosmetics.push(key);
-  writeSave();
-  return true;
+  writeSave(); return true;
 }
 function equipCosmetic(key) {
   if (!ownsCosmetic(key)) return;
@@ -1047,7 +868,6 @@ function hexToRgba(hex, a) {
   const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
   return `rgba(${r},${g},${b},${a})`;
 }
-
 const THEME_CONFIG = {
   theme_default: { bg: "#02020a", nebulaHues: [190, 280, 160, 320], starHue: 190, auroraHue: 190, milkyHue: 190, hueDrift: 0.0 },
   theme_sakura:  { bg: "#1a0812", nebulaHues: [330, 350, 310, 20],  starHue: 330, auroraHue: 330, milkyHue: 330, hueDrift: 0.0 },
@@ -1056,12 +876,11 @@ const THEME_CONFIG = {
   theme_sunset:  { bg: "#1a0a05", nebulaHues: [20, 40, 350, 10],    starHue: 20,  auroraHue: 20,  milkyHue: 20,  hueDrift: 0.0 },
   theme_toxic:   { bg: "#04140a", nebulaHues: [100, 130, 80, 150],  starHue: 100, auroraHue: 100, milkyHue: 100, hueDrift: 0.0 }
 };
-function getThemeConfig() { return THEME_CONFIG[getEquippedTheme()] || THEME_CONFIG.theme_default; }
-
+function getThemeConfig() { return THEME_CONFIG[getEquippedTheme()] || THEME_CONFIG.theme_default; }/* ============ 背景生成 ============ */
 function createStars() {
   stars = [];
   const cfg = getThemeConfig();
-  for (let i = 0; i < 350; i++) {
+  for (let i = 0; i < 200; i++) {
     const depth = Math.random();
     stars.push({
       x: Math.random()*W, y: Math.random()*H,
@@ -1123,7 +942,6 @@ function updateStars() {
   }
   updateThemeParticles();
 }
-
 function updateThemeParticles() {
   const themeKey = getEquippedTheme();
   if (themeKey === "theme_default") return;
@@ -1165,11 +983,12 @@ function updateThemeParticles() {
   }
   if (themeParticles.length > 300) themeParticles.splice(0, themeParticles.length - 300);
 }
-
 function drawBackground() {
   const themeKey = getEquippedTheme();
   const cfg = getThemeConfig();
-  ctx.fillStyle = cfg.bg;
+  const dayPhase = (time % 7200) / 7200;
+  const nightFactor = 0.5 + Math.sin(dayPhase * TAU - Math.PI/2) * 0.5;
+  ctx.fillStyle = nightFactor > 0.7 ? "#000005" : cfg.bg;
   ctx.fillRect(0, 0, W, H);
   const hueShift = bgTint * 0.3 + time * cfg.hueDrift;
   const dangerA = dangerTint;
@@ -1180,7 +999,7 @@ function drawBackground() {
     ctx.fillStyle = grad;
     ctx.fillRect(n.x - n.r, n.y - n.r, n.r*2, n.r*2);
   }
-  if (FX.bgMultiplier > 0.2) {
+  if (FX.bgMultiplier > 0.2 && time % 2 === 0) {
     for (const band of auroraBands) {
       band.phase += band.speed;
       const hue = (band.hue + hueShift) % 360;
@@ -1219,8 +1038,7 @@ function drawBackground() {
   for (const s of stars) {
     const twinkle = 0.6 + Math.sin(s.twinkle) * 0.5;
     const alpha = s.alpha * twinkle;
-    const hue = `hsla(${(s.hue + hueShift) % 360}, 90%, 75%, ${alpha})`;
-    ctx.strokeStyle = hue;
+    ctx.strokeStyle = `hsla(${(s.hue + hueShift) % 360}, 90%, 75%, ${alpha})`;
     ctx.lineWidth = s.size;
     ctx.beginPath();
     ctx.moveTo(s.x, s.y);
@@ -1277,6 +1095,7 @@ function drawBackground() {
   }
 }
 
+/* ============ 画面効果 ============ */
 function shake(amount) { screenShake = Math.max(screenShake, amount * FX.shakeMultiplier); }
 function hitStopAdd(frames) { hitStop = Math.max(hitStop, Math.floor(frames * FX.hitStopMultiplier)); }
 function flash(color, frames) {
@@ -1298,12 +1117,36 @@ function burst(x, y, count, color) {
       size: 2 + Math.random()*3
     });
   }
-  if (particles.length > 1500) particles.splice(0, particles.length - 1500);
+  if (particles.length > 600) particles.splice(0, particles.length - 600);
+}
+function showDamage(x, y, amount, color) {
+  if (typeof amount === "number") {
+    for (let i = damageNumbers.length-1; i >= 0; i--) {
+      const d = damageNumbers[i];
+      if (Math.hypot(d.x - x, d.y - y) < 30 && d.life > 25 && typeof d.text === "number") {
+        d.text = Math.round((d.text + amount) * 10) / 10;
+        d.life = Math.max(d.life, 45);
+        return;
+      }
+    }
+  }
+  damageNumbers.push({
+    x, y, vy: -2, life: 45,
+    text: typeof amount === "number" ? Math.round(amount*10)/10 : amount,
+    color: color || "#ffffff", scale: 1
+  });
+}
+function showBigDamage(x, y, amount, color) {
+  damageNumbers.push({
+    x, y, vy: -3, life: 70,
+    text: typeof amount === "number" ? Math.round(amount*10)/10 : amount,
+    color: color || "#ffffff", scale: 2.2
+  });
 }
 
+/* ============ 入力 ============ */
 let touchX = null, touchY = null, menuStartY = 0, menuDragged = false;
 const keys = {};
-
 function getPointerPosition(e) {
   const rect = canvas.getBoundingClientRect();
   const src = e.touches ? e.touches[0] : e;
@@ -1312,80 +1155,56 @@ function getPointerPosition(e) {
     y: (src.clientY - rect.top) * H / rect.height
   };
 }
-
 const MENU_MARGIN = 24, MENU_TOP = 60;
 const MENU_ITEM_HEIGHT = 70, MENU_GAP = 8;
 const MENU_WIDTH = W - MENU_MARGIN*2;
 const MENU_VIEW_HEIGHT = H - MENU_TOP - 60;
-let menuScrollY = 0;
-let specialMenuScrollY = 0;
+let menuScrollY = 0, specialMenuScrollY = 0, shopScrollY = 0;
+let shopMessage = null, shopTab = "weapon";
 
-let shopScrollY = 0;
-let shopMessage = null;
-let shopTab = "weapon";
-
+function menuViewHeight() { return (H - 70) - (MENU_TOP + 15); }
 function menuContentHeight() { return getAvailableWeapons().length*(MENU_ITEM_HEIGHT+MENU_GAP) - MENU_GAP; }
-function menuMaxScroll() { return Math.max(0, menuContentHeight() - MENU_VIEW_HEIGHT); }
+function menuMaxScroll() { return Math.max(0, menuContentHeight() - menuViewHeight()); }
+function specialMenuViewHeight() { return (H - 70) - (MENU_TOP + 15); }
 function specialMenuContentHeight() { return getAvailableSpecials().length*(MENU_ITEM_HEIGHT+MENU_GAP) - MENU_GAP; }
-function specialMenuMaxScroll() { return Math.max(0, specialMenuContentHeight() - MENU_VIEW_HEIGHT); }
+function specialMenuMaxScroll() { return Math.max(0, specialMenuContentHeight() - specialMenuViewHeight()); }
+function shopViewHeight() { return (H - 70) - (SHOP_TAB_Y + SHOP_TAB_H + 20); }
 function shopContentHeight() {
   const list = shopTab === "weapon" ? getShopWeapons() : shopTab === "special" ? getShopSpecials() : shopTab === "upgrade" ? UPGRADE_ORDER : getShopCosmetics();
   return list.length*(MENU_ITEM_HEIGHT+MENU_GAP) - MENU_GAP;
 }
-function shopMaxScroll() { return Math.max(0, shopContentHeight() - MENU_VIEW_HEIGHT); }
+function shopMaxScroll() { return Math.max(0, shopContentHeight() - shopViewHeight()); }
 
-function p_inRange(px, py, x, y, w, h) {
-  return px >= x && px <= x+w && py >= y && py <= y+h;
-}
+function p_inRange(px, py, x, y, w, h) { return px >= x && px <= x+w && py >= y && py <= y+h; }
 function p_inSpecialBtn(px, py) {
-  const dx = px - SPECIAL_BTN_X;
-  const dy = py - SPECIAL_BTN_Y;
+  const dx = px - SPECIAL_BTN_X, dy = py - SPECIAL_BTN_Y;
   return dx*dx + dy*dy <= SPECIAL_BTN_R*SPECIAL_BTN_R;
 }
 function p_inPauseBtn(px, py) {
-  const dx = px - PAUSE_BTN_X;
-  const dy = py - PAUSE_BTN_Y;
+  const dx = px - PAUSE_BTN_X, dy = py - PAUSE_BTN_Y;
   return dx*dx + dy*dy <= PAUSE_BTN_R*PAUSE_BTN_R;
 }
 function p_inMuteBtn(px, py) {
-  const dx = px - MUTE_BTN_X;
-  const dy = py - MUTE_BTN_Y;
+  const dx = px - MUTE_BTN_X, dy = py - MUTE_BTN_Y;
   return dx*dx + dy*dy <= MUTE_BTN_R*MUTE_BTN_R;
 }
 
-const TITLE_MODES_Y = 235;
-const TITLE_MODE_W = 110;
-const TITLE_MODE_H = 48;
+const TITLE_MODES_Y = 235, TITLE_MODE_W = 110, TITLE_MODE_H = 48;
 const TITLE_MODE_XS = [60, 190, 320];
-
-const TITLE_PLAY_Y = 300;
-const TITLE_PLAY_W = 360;
-const TITLE_PLAY_H = 45;
-
-const TITLE_FUSION_Y = 355;
-const TITLE_FUSION_W = 360;
-const TITLE_FUSION_H = 45;
-
-const TITLE_QUICK_Y = 410;
-const TITLE_QUICK_W = 360;
-const TITLE_QUICK_H = 45;
-
-const TITLE_GRID_Y = 465;
-const TITLE_GRID_H = 50;
-const TITLE_GRID_GAP = 8;
+const TITLE_PLAY_Y = 300, TITLE_PLAY_W = 360, TITLE_PLAY_H = 45;
+const TITLE_FUSION_Y = 355, TITLE_FUSION_W = 360, TITLE_FUSION_H = 45;
+const TITLE_QUICK_Y = 410, TITLE_QUICK_W = 360, TITLE_QUICK_H = 45;
+const TITLE_GRID_Y = 465, TITLE_GRID_H = 50, TITLE_GRID_GAP = 8;
 const TITLE_GRID_W = (TITLE_PLAY_W - TITLE_GRID_GAP) / 2;
 const TITLE_GRID_X1 = (W - TITLE_PLAY_W) / 2;
 const TITLE_GRID_X2 = TITLE_GRID_X1 + TITLE_GRID_W + TITLE_GRID_GAP;
 const TITLE_GRID_Y2 = TITLE_GRID_Y + TITLE_GRID_H + TITLE_GRID_GAP;
-
+const TITLE_GACHA_Y = 530, TITLE_GACHA_W = 360, TITLE_GACHA_H = 40;
 const TITLE_SETTINGS_BTN_R = 24;
 const TITLE_SETTINGS_BTN_X = W - TITLE_SETTINGS_BTN_R - 16;
 const TITLE_SETTINGS_BTN_Y = 40;
 
-const SHOP_TAB_Y = 82;
-const SHOP_TAB_H = 34;
-const SHOP_TAB_GAP = 6;
-const SHOP_TAB_COUNT = 4;
+const SHOP_TAB_Y = 82, SHOP_TAB_H = 34, SHOP_TAB_GAP = 6, SHOP_TAB_COUNT = 4;
 const SHOP_TAB_TOTAL_W = W - MENU_MARGIN*2 - SHOP_TAB_GAP*(SHOP_TAB_COUNT-1);
 const SHOP_TAB_W = SHOP_TAB_TOTAL_W / SHOP_TAB_COUNT;
 const SHOP_TAB_START_X = MENU_MARGIN;
@@ -1395,29 +1214,20 @@ const SHOP_TAB_UPGRADE_X = SHOP_TAB_START_X + (SHOP_TAB_W + SHOP_TAB_GAP)*2;
 const SHOP_TAB_COSMETIC_X = SHOP_TAB_START_X + (SHOP_TAB_W + SHOP_TAB_GAP)*3;
 
 function selectWeapon(type) {
-  if (!ownsWeapon(type)) {
-    showShopMessage("未購入の武器です！ショップで購入してください", "#ff6666");
-    return;
-  }
+  if (!ownsWeapon(type)) { showShopMessage("未購入の武器です！ショップで購入してください", "#ff6666"); return; }
   sfx.tap();
   selectedWeapon = type;
-  weaponMenu = false;
-  specialMenu = true;
+  weaponMenu = false; specialMenu = true;
   specialMenuScrollY = 0;
   activeWeapons = [type];
   fusionMode = false;
 }
-
 function selectSpecial(key) {
-  if (!ownsSpecial(key) && key !== "knowledgeburst") {
-    showShopMessage("未購入の必殺技です！ショップで購入してください", "#ff6666");
-    return;
-  }
+  if (!ownsSpecial(key) && key !== "knowledgeburst") { showShopMessage("未購入の必殺技です！ショップで購入してください", "#ff6666"); return; }
   sfx.tap();
   selectedSpecial = key;
   startGameWithCurrentSelection();
 }
-
 function startGameWithCurrentSelection() {
   specialMenu = false;
   player.maxHp = 50 + getMaxHpBonus();
@@ -1427,480 +1237,109 @@ function startGameWithCurrentSelection() {
   player.x = W/2; player.y = H-120; player.cool = 0;
   knifeAngle = -Math.PI/2; knifeTouchMode = null;
   swordAngle = -Math.PI/2;
-  rapidTimer = 0; rapidCooldown = 0;
-  vampireHeal = 0;
+  rapidTimer = 0; rapidCooldown = 0; vampireHeal = 0;
   bullets = []; enemyBullets = []; turrets = []; lightningBolts = [];
   powerups = []; mines = []; afterImages = [];
-  weaponPower = {};
-  weaponCools = {};
-  bossKillCount = 0;
-  gameClear = false;
-  specialGauge = 0;
-  specialActive = 0;
-  theWorldTimer = 0;
-  mudaRushTimer = 0;
-  mudaRushEnemy = null;
-  madeInHeavenTimer = 0;
-  kingCrimsonTimer = 0;
-  stickyFingersTimer = 0;
-  stickyFingersTarget = null;
-  gerTimer = 0;
-  whiteSnakeTimer = 0;
-  determinationActive = 0;
-  boneBarriers = [];
-  gasterBlasters = [];
-  blueAttacks = [];
+  weaponPower = {}; weaponCools = {};
+  bossKillCount = 0; gameClear = false;
+  specialGauge = 0; specialActive = 0;
+  theWorldTimer = 0; mudaRushTimer = 0; mudaRushEnemy = null; madeInHeavenTimer = 0;
+  kingCrimsonTimer = 0; stickyFingersTimer = 0; stickyFingersTarget = null;
+  gerTimer = 0; whiteSnakeTimer = 0; determinationActive = 0;
+  boneBarriers = []; gasterBlasters = []; blueAttacks = [];
   const startLv = 1 + getStartLevelBonus();
-  level = startLv;
-  exp = 0;
-  nextExp = 6 + (startLv - 1) * 8;
-  score = 0;
-  time = 0;
-  difficulty = 1;
-  combo = 0;
-  comboTimer = 0;
-  maxCombo = 0;
-  wave = 1;
-  waveTimer = 0;
-  bossActive = false;
-  resetMissionSession();
-  missionSession.plays = 1;
-  studyTimer = studyTimerMax;
-  studyQuiz = null;
-  studyQuizActive = false;
-  studyCorrectCount = 0;
-  studyBurstGauge = 0;
-  pauseScreen = false;
-  pauseBackToTitleConfirm = false;
+  level = startLv; exp = 0; nextExp = 6 + (startLv - 1) * 8;
+  score = 0; time = 0; difficulty = 1;
+  combo = 0; comboTimer = 0; maxCombo = 0;
+  wave = 1; waveTimer = 0; bossActive = false;
+  resetMissionSession(); missionSession.plays = 1;
+  studyTimer = studyTimerMax; studyQuiz = null; studyQuizActive = false;
+  studyCorrectCount = 0; studyBurstGauge = 0;
+  pauseScreen = false; pauseBackToTitleConfirm = false;
   shake(25); flash(specials[selectedSpecial].color, 10); chroma(10);
   saveData.totalPlays = (saveData.totalPlays || 0) + 1;
   writeSave();
 }
-
 function startFusionGame() {
   if (fusionSelected.length < 2) return;
   sfx.tap();
   activeWeapons = fusionSelected.slice();
   selectedWeapon = activeWeapons[0];
-  weaponMenu = false;
-  specialMenu = true;
-  specialMenuScrollY = 0;
-  fusionMode = true;
+  weaponMenu = false; specialMenu = true;
+  specialMenuScrollY = 0; fusionMode = true;
 }
-
 function startStudyMode(grade) {
   sfx.tap();
-  studyMode = true;
-  studyGrade = grade;
-  saveData.studyGrade = grade;
-  writeSave();
-  selectedWeapon = "normal";
-  selectedSpecial = "knowledgeburst";
-  activeWeapons = ["normal"];
-  fusionMode = false;
-  quickMode = false;
+  studyMode = true; studyGrade = grade;
+  saveData.studyGrade = grade; writeSave();
+  selectedWeapon = "normal"; selectedSpecial = "knowledgeburst";
+  activeWeapons = ["normal"]; fusionMode = false; quickMode = false;
   applyChallenge(null);
-  studySelectScreen = false;
-  titleScreen = false;
-  weaponMenu = false;
-  specialMenu = false;
-  shopScreen = false;
-  missionScreen = false;
-  challengeScreen = false;
+  studySelectScreen = false; titleScreen = false;
+  weaponMenu = false; specialMenu = false; shopScreen = false;
+  missionScreen = false; challengeScreen = false;
   player.maxHp = 50 + getMaxHpBonus();
   player.hp = player.maxHp;
   player.x = W/2; player.y = H-120; player.cool = 0;
-  knifeAngle = -Math.PI/2; knifeTouchMode = null;
-  swordAngle = -Math.PI/2;
-  rapidTimer = 0; rapidCooldown = 0;
-  vampireHeal = 0;
+  knifeAngle = -Math.PI/2; knifeTouchMode = null; swordAngle = -Math.PI/2;
+  rapidTimer = 0; rapidCooldown = 0; vampireHeal = 0;
   bullets = []; enemyBullets = []; turrets = []; lightningBolts = [];
   powerups = []; mines = []; afterImages = [];
-  weaponPower = {};
-  weaponCools = {};
-  bossKillCount = 0;
-  gameClear = false;
-  specialGauge = 0;
-  specialActive = 0;
-  theWorldTimer = 0;
-  mudaRushTimer = 0;
-  mudaRushEnemy = null;
-  madeInHeavenTimer = 0;
-  kingCrimsonTimer = 0;
-  stickyFingersTimer = 0;
-  stickyFingersTarget = null;
-  gerTimer = 0;
-  whiteSnakeTimer = 0;
-  determinationActive = 0;
-  boneBarriers = [];
-  gasterBlasters = [];
-  blueAttacks = [];
-  level = 1;
-  exp = 0;
-  nextExp = 6;
-  score = 0;
-  time = 0;
-  difficulty = 1;
-  combo = 0;
-  comboTimer = 0;
-  maxCombo = 0;
-  wave = 1;
-  waveTimer = 0;
-  bossActive = false;
-  resetMissionSession();
-  missionSession.plays = 1;
-  studyTimer = studyTimerMax;
-  studyQuiz = null;
-  studyQuizActive = false;
-  studyCorrectCount = 0;
-  studyBurstGauge = 0;
-  pauseScreen = false;
-  pauseBackToTitleConfirm = false;
+  weaponPower = {}; weaponCools = {};
+  bossKillCount = 0; gameClear = false; specialGauge = 0; specialActive = 0;
+  theWorldTimer = 0; mudaRushTimer = 0; mudaRushEnemy = null; madeInHeavenTimer = 0;
+  kingCrimsonTimer = 0; stickyFingersTimer = 0; stickyFingersTarget = null;
+  gerTimer = 0; whiteSnakeTimer = 0; determinationActive = 0;
+  boneBarriers = []; gasterBlasters = []; blueAttacks = [];
+  level = 1; exp = 0; nextExp = 6; score = 0; time = 0; difficulty = 1;
+  combo = 0; comboTimer = 0; maxCombo = 0;
+  wave = 1; waveTimer = 0; bossActive = false;
+  resetMissionSession(); missionSession.plays = 1;
+  studyTimer = studyTimerMax; studyQuiz = null; studyQuizActive = false;
+  studyCorrectCount = 0; studyBurstGauge = 0;
+  pauseScreen = false; pauseBackToTitleConfirm = false;
   shake(25); flash("#66ccff", 10); chroma(10);
   saveData.totalPlays = (saveData.totalPlays || 0) + 1;
   writeSave();
 }
+function showShopMessage(text, color) { shopMessage = { text, color: color || "#00ffcc", timer: 90 }; }
 
-function showShopMessage(text, color) {
-  shopMessage = { text, color: color || "#00ffcc", timer: 90 };
+/* ============ ガチャ ============ */
+function rollGacha() {
+  if (saveData.coins < 300) {
+    showShopMessage("コインが足りません (必要: 300)", "#ff6666");
+    shake(10); flash("#ff6666", 4);
+    return;
+  }
+  saveData.coins -= 300;
+  const pool = WEAPON_ORDER.filter(k => !ownsWeapon(k));
+  const spPool = SPECIAL_ORDER.filter(k => !ownsSpecial(k) && k !== "knowledgeburst");
+  const cosPool = COSMETIC_ORDER.filter(k => !ownsCosmetic(k));
+  const allPool = [];
+  for (const k of pool) allPool.push({ kind: "weapon", key: k });
+  for (const k of spPool) allPool.push({ kind: "special", key: k });
+  for (const k of cosPool) allPool.push({ kind: "cosmetic", key: k });
+  if (allPool.length === 0) {
+    showShopMessage("すべて解放済み！", "#ffd700");
+    saveData.coins += 300; return;
+  }
+  const pick = allPool[Math.floor(Math.random() * allPool.length)];
+  if (pick.kind === "weapon") saveData.ownedWeapons.push(pick.key);
+  else if (pick.kind === "special") saveData.ownedSpecials.push(pick.key);
+  else saveData.ownedCosmetics.push(pick.key);
+  writeSave();
+  const label = pick.kind === "weapon" ? weapons[pick.key].name
+              : pick.kind === "special" ? specials[pick.key].name
+              : cosmetics[pick.key].name;
+  showShopMessage(`🎉 ${label} を獲得！`, "#ffd700");
+  sfx.coin(); sfx.clear();
+  shake(50); flash("#ffd700", 15); chroma(25); hitStopAdd(10);
+  burst(W/2, H/2, 150, "#ffd700");
+  burst(W/2, H/2, 80, "#ffffff");
+  burst(W/2, H/2, 50, "#ff00ff");
 }
 
-function selectWeaponAt(x, y) {
-  if (settingsScreen) {
-    const toggleX = W/2 + 60;
-    const toggleW = 60;
-    const toggleH = 30;
-    const row1Y = 200;
-    const row2Y = 290;
-    const row3Y = 380;
-    if (p_inRange(x, y, toggleX, row1Y, toggleW, toggleH)) {
-      setBGMEnabled(!bgmEnabled);
-      saveData.bgmEnabled = bgmEnabled;
-      writeSave();
-      sfx.tap();
-      return;
-    }
-    if (p_inRange(x, y, toggleX, row2Y, toggleW, toggleH)) {
-      setSEEnabled(!seEnabled);
-      saveData.seEnabled = seEnabled;
-      writeSave();
-      sfx.tap();
-      return;
-    }
-    const sliderX = W/2 - 100;
-    const sliderW = 200;
-    const sliderY = 245;
-    const sliderH = 10;
-    if (p_inRange(x, y, sliderX, sliderY - 10, sliderW, 30)) {
-      const ratio = Math.max(0, Math.min(1, (x - sliderX) / sliderW));
-      setBGMVolume(ratio);
-      saveData.bgmVolume = bgmVolume;
-      writeSave();
-      return;
-    }
-    const sliderY2 = 335;
-    if (p_inRange(x, y, sliderX, sliderY2 - 10, sliderW, 30)) {
-      const ratio = Math.max(0, Math.min(1, (x - sliderX) / sliderW));
-      setSEVolume(ratio);
-      saveData.seVolume = seVolume;
-      writeSave();
-      return;
-    }
-    const btnW = 200, btnH = 50;
-    const btnX = (W - btnW)/2, btnY = H - 100;
-    if (p_inRange(x, y, btnX, btnY, btnW, btnH)) {
-      sfx.tap();
-      settingsScreen = false;
-      titleScreen = true;
-      return;
-    }
-    return;
-  }
-
-  if (pauseScreen) {
-    if (pauseBackToTitleConfirm) {
-      const btnW = 140, btnH = 50;
-      const btnY = H/2 + 30;
-      const yesX = W/2 - btnW - 8;
-      const noX = W/2 + 8;
-      if (p_inRange(x, y, yesX, btnY, btnW, btnH)) {
-        sfx.tap();
-        pauseBackToTitleConfirm = false;
-        pauseScreen = false;
-        abortGameToTitle();
-        return;
-      }
-      if (p_inRange(x, y, noX, btnY, btnW, btnH)) {
-        sfx.tap();
-        pauseBackToTitleConfirm = false;
-        return;
-      }
-      return;
-    }
-    const btnW = 240, btnH = 60;
-    const btnX = (W - btnW) / 2;
-    const resumeY = H/2 - 80;
-    const quitY = H/2 + 10;
-    if (p_inRange(x, y, btnX, resumeY, btnW, btnH)) {
-      sfx.tap();
-      pauseScreen = false;
-      return;
-    }
-    if (p_inRange(x, y, btnX, quitY, btnW, btnH)) {
-      sfx.tap();
-      pauseBackToTitleConfirm = true;
-      return;
-    }
-    return;
-  }
-
-  if (shopScreen) {
-    if (p_inRange(x, y, SHOP_TAB_WEAPON_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) {
-      if (shopTab !== "weapon") { sfx.tap(); shopTab = "weapon"; shopScrollY = 0; }
-      return;
-    }
-    if (p_inRange(x, y, SHOP_TAB_SPECIAL_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) {
-      if (shopTab !== "special") { sfx.tap(); shopTab = "special"; shopScrollY = 0; }
-      return;
-    }
-    if (p_inRange(x, y, SHOP_TAB_UPGRADE_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) {
-      if (shopTab !== "upgrade") { sfx.tap(); shopTab = "upgrade"; shopScrollY = 0; }
-      return;
-    }
-    if (p_inRange(x, y, SHOP_TAB_COSMETIC_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) {
-      if (shopTab !== "cosmetic") { sfx.tap(); shopTab = "cosmetic"; shopScrollY = 0; }
-      return;
-    }
-    const backBtnY = H - 45;
-    const backBtnW = 200;
-    const backBtnX = (W - backBtnW) / 2;
-    if (p_inRange(x, y, backBtnX, backBtnY - 22, backBtnW, 44)) {
-      sfx.tap();
-      shopScreen = false;
-      titleScreen = true;
-      return;
-    }
-    const listY = SHOP_TAB_Y + SHOP_TAB_H + 20;
-    if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < listY || y > H - 70) return;
-    const localY = y - listY + shopScrollY;
-    const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
-    const list = shopTab === "weapon" ? getShopWeapons() : shopTab === "special" ? getShopSpecials() : shopTab === "upgrade" ? UPGRADE_ORDER : getShopCosmetics();
-    if (idx < 0 || idx >= list.length) return;
-    if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) > MENU_ITEM_HEIGHT) return;
-    const key = list[idx];
-    if (shopTab === "weapon") {
-      if (ownsWeapon(key)) return;
-      const price = getWeaponPrice(key);
-      if (buyWeapon(key)) {
-        sfx.coin();
-        showShopMessage(`「${weapons[key].name}」を購入しました！`, "#88ff88");
-        shake(15); flash("#88ff88", 6);
-      } else {
-        showShopMessage(`コインが足りません（必要: ${price} / 所持: ${saveData.coins}）`, "#ff6666");
-        shake(10); flash("#ff6666", 4);
-      }
-    } else if (shopTab === "special") {
-      if (ownsSpecial(key)) return;
-      const price = getSpecialPrice(key);
-      if (buySpecial(key)) {
-        sfx.coin();
-        showShopMessage(`「${specials[key].name}」を購入しました！`, "#88ff88");
-        shake(15); flash("#88ff88", 6);
-      } else {
-        showShopMessage(`コインが足りません（必要: ${price} / 所持: ${saveData.coins}）`, "#ff6666");
-        shake(10); flash("#ff6666", 4);
-      }
-    } else if (shopTab === "upgrade") {
-      if (isUpgradeMaxed(key)) {
-        showShopMessage("この強化は最大レベルです", "#ffcc00");
-        return;
-      }
-      const price = getUpgradePrice(key);
-      if (buyUpgrade(key)) {
-        sfx.coin();
-        showShopMessage(`「${UPGRADES[key].name}」をLv${getUpgradeLevel(key)}に強化！`, "#88ff88");
-        shake(15); flash(UPGRADES[key].color, 6);
-      } else {
-        showShopMessage(`コインが足りません（必要: ${price} / 所持: ${saveData.coins}）`, "#ff6666");
-        shake(10); flash("#ff6666", 4);
-      }
-    } else {
-      if (ownsCosmetic(key)) {
-        sfx.tap();
-        equipCosmetic(key);
-        showShopMessage(`「${cosmetics[key].name}」を装備しました！`, "#88ff88");
-        shake(8); flash(cosmetics[key].color, 5);
-        if (cosmetics[key].kind === "theme") createStars();
-        return;
-      }
-      const price = getCosmeticPrice(key);
-      if (buyCosmetic(key)) {
-        sfx.coin();
-        showShopMessage(`「${cosmetics[key].name}」を購入しました！`, "#88ff88");
-        shake(15); flash("#88ff88", 6);
-      } else {
-        showShopMessage(`コインが足りません（必要: ${price} / 所持: ${saveData.coins}）`, "#ff6666");
-        shake(10); flash("#ff6666", 4);
-      }
-    }
-    return;
-  }
-
-  if (missionScreen) {
-    const backBtnY = H - 45;
-    const backBtnW = 200;
-    const backBtnX = (W - backBtnW) / 2;
-    if (p_inRange(x, y, backBtnX, backBtnY - 22, backBtnW, 44)) {
-      sfx.tap();
-      missionScreen = false;
-      titleScreen = true;
-      return;
-    }
-    const listY = 120;
-    for (let i = 0; i < dailyMissions.length; i++) {
-      const m = dailyMissions[i];
-      const y2 = listY + i * 150;
-      const btnX = MENU_MARGIN;
-      const btnW = MENU_WIDTH;
-      if (p_inRange(x, y, btnX, y2 + 100, btnW, 36)) {
-        if (!m.claimed && isMissionComplete(m)) {
-          if (claimMissionReward(i)) {
-            shake(20); flash("#ffd700", 8); chroma(10);
-            burst(W/2, H/2, 60, "#ffd700");
-            burst(W/2, H/2, 30, "#ffffff");
-          }
-        }
-        return;
-      }
-    }
-    return;
-  }
-
-  if (challengeScreen) {
-    const backBtnY = H - 45;
-    const backBtnW = 200;
-    const backBtnX = (W - backBtnW) / 2;
-    if (p_inRange(x, y, backBtnX, backBtnY - 22, backBtnW, 44)) {
-      sfx.tap();
-      challengeScreen = false;
-      titleScreen = true;
-      return;
-    }
-    const listY = 90;
-    for (let i = 0; i < CHALLENGE_ORDER.length; i++) {
-      const y2 = listY + i * 60;
-      if (y2 > H - 100) break;
-      if (p_inRange(x, y, MENU_MARGIN, y2, MENU_WIDTH, 54)) {
-        sfx.tap();
-        const key = CHALLENGE_ORDER[i];
-        applyChallenge(key);
-        challengeScreen = false;
-        titleScreen = false;
-        weaponMenu = true;
-        specialMenu = false;
-        fusionMode = false;
-        quickMode = false;
-        menuScrollY = 0;
-        shake(15); flash(CHALLENGES[key].color, 6);
-        return;
-      }
-    }
-    if (p_inRange(x, y, MENU_MARGIN, H - 100, MENU_WIDTH, 36)) {
-      sfx.tap();
-      applyChallenge(null);
-      challengeScreen = false;
-      titleScreen = false;
-      weaponMenu = true;
-      specialMenu = false;
-      fusionMode = false;
-      quickMode = false;
-      menuScrollY = 0;
-      shake(15); flash("#00ffcc", 6);
-      return;
-    }
-    return;
-  }
-
-  if (studySelectScreen) {
-    const backBtnY = H - 45;
-    const backBtnW = 200;
-    const backBtnX = (W - backBtnW) / 2;
-    if (p_inRange(x, y, backBtnX, backBtnY - 22, backBtnW, 44)) {
-      sfx.tap();
-      studySelectScreen = false;
-      titleScreen = true;
-      return;
-    }
-    const btnY1 = 200, btnY2 = 270, btnY3 = 340;
-    const btnW = 280, btnH = 55;
-    const btnX = (W - btnW) / 2;
-    if (p_inRange(x, y, btnX, btnY1, btnW, btnH)) { startStudyMode(1); return; }
-    if (p_inRange(x, y, btnX, btnY2, btnW, btnH)) { startStudyMode(2); return; }
-    if (p_inRange(x, y, btnX, btnY3, btnW, btnH)) { startStudyMode(3); return; }
-    return;
-  }
-
-  if (specialMenu) {
-    const list = getAvailableSpecials();
-    if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < MENU_TOP || y > H) return;
-    const localY = y - MENU_TOP + specialMenuScrollY;
-    const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
-    if (idx < 0 || idx >= list.length) return;
-    if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) <= MENU_ITEM_HEIGHT) selectSpecial(list[idx]);
-    return;
-  }
-
-  if (weaponMenu) {
-    if (fusionMode) {
-      if (fusionSelected.length >= 2) {
-        const btnY = H - 45;
-        const btnW = 220;
-        const btnX = (W - btnW) / 2;
-        if (p_inRange(x, y, btnX, btnY - 22, btnW, 44)) { startFusionGame(); return; }
-      }
-      if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < MENU_TOP || y > H - 60) return;
-      const localY = y - MENU_TOP + menuScrollY;
-      const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
-      const avail = getAvailableWeapons();
-      if (idx < 0 || idx >= avail.length) return;
-      if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) > MENU_ITEM_HEIGHT) return;
-      const key = avail[idx];
-      sfx.tap();
-      const i = fusionSelected.indexOf(key);
-      if (i >= 0) fusionSelected.splice(i, 1);
-      else fusionSelected.push(key);
-      return;
-    }
-    if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < MENU_TOP || y > H) return;
-    const localY = y - MENU_TOP + menuScrollY;
-    const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
-    const avail = getAvailableWeapons();
-    if (idx < 0 || idx >= avail.length) return;
-    if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) <= MENU_ITEM_HEIGHT) selectWeapon(avail[idx]);
-  }
-}
-
-function tryDash() {
-  if (player.dashCooldown > 0 || player.dashTimer > 0) return;
-  let dx = 0, dy = 0;
-  if (keys.arrowleft || keys.a) dx -= 1;
-  if (keys.arrowright || keys.d) dx += 1;
-  if (keys.arrowup || keys.w) dy -= 1;
-  if (keys.arrowdown || keys.s) dy += 1;
-  if (dx === 0 && dy === 0) dy = -1;
-  const len = Math.hypot(dx, dy);
-  player.dashVx = dx/len * 14;
-  player.dashVy = dy/len * 14;
-  player.dashTimer = 12;
-  player.dashCooldown = Math.floor(45 * getDashCdMult());
-  player.invincible = Math.max(player.invincible, 14);
-  sfx.dash();
-  burst(player.x, player.y, 20, getPlayerColor());
-  burst(player.x, player.y, 10, "#ffffff");
-  shake(12);
-  flash(getPlayerColor(), 4);
-}
-
+/* ============ タップ処理 ============ */
 function startPointer(e) {
   e.preventDefault();
   initAudio();
@@ -1909,81 +1348,51 @@ function startPointer(e) {
 
   if (titleScreen && showDailyBonusPopup) {
     const btnW = 220, btnH = 50;
-    const btnX = (W - btnW) / 2;
-    const btnY = H/2 + 70;
-    if (p_inRange(p.x, p.y, btnX, btnY, btnW, btnH)) {
-      sfx.tap();
-      claimDailyBonus();
-    }
+    const btnX = (W - btnW) / 2, btnY = H/2 + 70;
+    if (p_inRange(p.x, p.y, btnX, btnY, btnW, btnH)) { sfx.tap(); claimDailyBonus(); }
     return;
   }
-
   if (!titleScreen && !weaponMenu && !specialMenu && !shopScreen && !gameOver && !missionScreen && !challengeScreen && !studySelectScreen && !pauseScreen && !settingsScreen) {
     if (p_inMuteBtn(p.x, p.y)) {
-      setSEEnabled(!seEnabled);
-      saveData.seEnabled = seEnabled;
-      writeSave();
+      setSEEnabled(!seEnabled); saveData.seEnabled = seEnabled; writeSave();
       if (seEnabled) sfx.tap();
       return;
     }
   }
-
   if (settingsScreen) { touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return; }
   if (pauseScreen) { touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return; }
-
   if (studyQuizActive && studyQuiz) {
-    const btnW = (W - 80) / 2;
-    const btnH = 70;
-    const gap = 12;
-    const baseX = 40;
-    const baseY = H - 260;
+    const btnW = (W - 80) / 2, btnH = 70, gap = 12, baseX = 40, baseY = H - 260;
     for (let i = 0; i < 4; i++) {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
+      const col = i % 2, row = Math.floor(i / 2);
       const bx = baseX + col * (btnW + gap);
       const by = baseY + row * (btnH + gap);
       if (p_inRange(p.x, p.y, bx, by, btnW, btnH)) { answerStudyQuiz(i); return; }
     }
     return;
   }
-
   if (shopScreen || missionScreen || challengeScreen || studySelectScreen) {
-    touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false;
-    return;
+    touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return;
   }
-
   if (titleScreen) {
     {
-      const dx = p.x - TITLE_SETTINGS_BTN_X;
-      const dy = p.y - TITLE_SETTINGS_BTN_Y;
+      const dx = p.x - TITLE_SETTINGS_BTN_X, dy = p.y - TITLE_SETTINGS_BTN_Y;
       if (dx*dx + dy*dy <= TITLE_SETTINGS_BTN_R*TITLE_SETTINGS_BTN_R) {
-        sfx.tap();
-        settingsScreen = true;
-        titleScreen = false;
-        return;
+        sfx.tap(); settingsScreen = true; titleScreen = false; return;
       }
     }
     const modes = ["chaos", "normal", "safe"];
     for (let i = 0; i < 3; i++) {
       if (p_inRange(p.x, p.y, TITLE_MODE_XS[i], TITLE_MODES_Y, TITLE_MODE_W, TITLE_MODE_H)) {
-        sfx.tap();
-        fxMode = modes[i];
-        applyFxMode();
-        return;
+        sfx.tap(); fxMode = modes[i]; applyFxMode(); return;
       }
     }
     {
       const btnX = (W - TITLE_PLAY_W) / 2;
       if (p_inRange(p.x, p.y, btnX, TITLE_PLAY_Y, TITLE_PLAY_W, TITLE_PLAY_H)) {
         sfx.tap();
-        studyMode = false;
-        titleScreen = false;
-        weaponMenu = true;
-        specialMenu = false;
-        fusionMode = false;
-        quickMode = false;
-        applyChallenge(null);
-        menuScrollY = 0;
+        studyMode = false; titleScreen = false; weaponMenu = true; specialMenu = false;
+        fusionMode = false; quickMode = false; applyChallenge(null); menuScrollY = 0;
         return;
       }
     }
@@ -1991,15 +1400,9 @@ function startPointer(e) {
       const btnX = (W - TITLE_FUSION_W) / 2;
       if (p_inRange(p.x, p.y, btnX, TITLE_FUSION_Y, TITLE_FUSION_W, TITLE_FUSION_H)) {
         sfx.tap();
-        studyMode = false;
-        fusionMode = true;
-        quickMode = false;
-        fusionSelected = [];
-        applyChallenge(null);
-        titleScreen = false;
-        weaponMenu = true;
-        specialMenu = false;
-        menuScrollY = 0;
+        studyMode = false; fusionMode = true; quickMode = false;
+        fusionSelected = []; applyChallenge(null);
+        titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0;
         return;
       }
     }
@@ -2007,60 +1410,39 @@ function startPointer(e) {
       const btnX = (W - TITLE_QUICK_W) / 2;
       if (p_inRange(p.x, p.y, btnX, TITLE_QUICK_Y, TITLE_QUICK_W, TITLE_QUICK_H)) {
         sfx.tap();
-        studyMode = false;
-        quickMode = true;
-        fusionMode = false;
-        fusionSelected = [];
-        applyChallenge(null);
-        titleScreen = false;
-        weaponMenu = true;
-        specialMenu = false;
-        menuScrollY = 0;
+        studyMode = false; quickMode = true; fusionMode = false;
+        fusionSelected = []; applyChallenge(null);
+        titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0;
         return;
       }
     }
     if (p_inRange(p.x, p.y, TITLE_GRID_X1, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H)) {
-      sfx.tap();
-      shopScreen = true; titleScreen = false; shopScrollY = 0; shopTab = "weapon"; return;
+      sfx.tap(); shopScreen = true; titleScreen = false; shopScrollY = 0; shopTab = "weapon"; return;
     }
     if (p_inRange(p.x, p.y, TITLE_GRID_X2, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H)) {
-      sfx.tap();
-      checkDailyMissions();
-      missionScreen = true; titleScreen = false; return;
+      sfx.tap(); checkDailyMissions(); missionScreen = true; titleScreen = false; return;
     }
     if (p_inRange(p.x, p.y, TITLE_GRID_X1, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H)) {
-      sfx.tap();
-      challengeScreen = true; titleScreen = false; return;
+      sfx.tap(); challengeScreen = true; titleScreen = false; return;
     }
     if (p_inRange(p.x, p.y, TITLE_GRID_X2, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H)) {
-      sfx.tap();
-      studySelectScreen = true; titleScreen = false; return;
+      sfx.tap(); studySelectScreen = true; titleScreen = false; return;
+    }
+    if (p_inRange(p.x, p.y, (W - TITLE_GACHA_W)/2, TITLE_GACHA_Y, TITLE_GACHA_W, TITLE_GACHA_H)) {
+      sfx.tap(); rollGacha(); return;
     }
     return;
   }
-
   if (weaponMenu) { touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return; }
   if (specialMenu) { touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return; }
-  if (gameOver) { if (gameClear) { returnToTitle(); } else { resetGame(); } return; }
-
-  if (p_inPauseBtn(p.x, p.y)) {
-    sfx.tap();
-    pauseScreen = true;
-    pauseBackToTitleConfirm = false;
-    return;
-  }
-
+  if (gameOver) { if (gameClear) returnToTitle(); else resetGame(); return; }
+  if (p_inPauseBtn(p.x, p.y)) { sfx.tap(); pauseScreen = true; pauseBackToTitleConfirm = false; return; }
   if (specialGauge >= SPECIAL_MAX && specialActive <= 0 && !challengeNoSpecials && !studyMode && p_inSpecialBtn(p.x, p.y)) {
-    sfx.special();
-    activateSpecial();
-    return;
+    sfx.special(); activateSpecial(); return;
   }
   if (studyMode && studyBurstGauge >= STUDY_BURST_MAX && specialActive <= 0 && p_inSpecialBtn(p.x, p.y)) {
-    sfx.special();
-    activateSpecial();
-    return;
+    sfx.special(); activateSpecial(); return;
   }
-
   if (selectedWeapon === "knife" || selectedWeapon === "sword") {
     const d = Math.hypot(p.x-player.x, p.y-player.y);
     if (d < 70) {
@@ -2071,7 +1453,6 @@ function startPointer(e) {
   }
   touchX = p.x; touchY = p.y;
 }
-
 function movePointer(e) {
   e.preventDefault();
   if (touchX === null) return;
@@ -2126,52 +1507,233 @@ canvas.addEventListener("wheel", e => {
   else if (weaponMenu) menuScrollY = Math.max(0, Math.min(menuMaxScroll(), menuScrollY + e.deltaY));
 }, { passive:false });
 
+/* ============ selectWeaponAt ============ */
+function selectWeaponAt(x, y) {
+  if (settingsScreen) {
+    const toggleX = W/2 + 60, toggleW = 60, toggleH = 30;
+    const row1Y = 200, row2Y = 290;
+    if (p_inRange(x, y, toggleX, row1Y, toggleW, toggleH)) {
+      setBGMEnabled(!bgmEnabled); saveData.bgmEnabled = bgmEnabled; writeSave(); sfx.tap(); return;
+    }
+    if (p_inRange(x, y, toggleX, row2Y, toggleW, toggleH)) {
+      setSEEnabled(!seEnabled); saveData.seEnabled = seEnabled; writeSave(); sfx.tap(); return;
+    }
+    const sliderX = W/2 - 100, sliderW = 200, sliderY = 245;
+    if (p_inRange(x, y, sliderX, sliderY - 10, sliderW, 30)) {
+      setBGMVolume(Math.max(0, Math.min(1, (x - sliderX) / sliderW)));
+      saveData.bgmVolume = bgmVolume; writeSave(); return;
+    }
+    const sliderY2 = 335;
+    if (p_inRange(x, y, sliderX, sliderY2 - 10, sliderW, 30)) {
+      setSEVolume(Math.max(0, Math.min(1, (x - sliderX) / sliderW)));
+      saveData.seVolume = seVolume; writeSave(); return;
+    }
+    const btnW = 200, btnH = 50, btnX = (W - btnW)/2, btnY = H - 100;
+    if (p_inRange(x, y, btnX, btnY, btnW, btnH)) {
+      sfx.tap(); settingsScreen = false; titleScreen = true; return;
+    }
+    return;
+  }
+  if (pauseScreen) {
+    if (pauseBackToTitleConfirm) {
+      const btnW = 140, btnH = 50, btnY = H/2 + 30;
+      const yesX = W/2 - btnW - 8, noX = W/2 + 8;
+      if (p_inRange(x, y, yesX, btnY, btnW, btnH)) {
+        sfx.tap(); pauseBackToTitleConfirm = false; pauseScreen = false; abortGameToTitle(); return;
+      }
+      if (p_inRange(x, y, noX, btnY, btnW, btnH)) {
+        sfx.tap(); pauseBackToTitleConfirm = false; return;
+      }
+      return;
+    }
+    const btnW = 240, btnH = 60, btnX = (W - btnW) / 2;
+    const resumeY = H/2 - 80, quitY = H/2 + 10;
+    if (p_inRange(x, y, btnX, resumeY, btnW, btnH)) { sfx.tap(); pauseScreen = false; return; }
+    if (p_inRange(x, y, btnX, quitY, btnW, btnH)) { sfx.tap(); pauseBackToTitleConfirm = true; return; }
+    return;
+  }
+  if (shopScreen) {
+    if (p_inRange(x, y, SHOP_TAB_WEAPON_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) {
+      if (shopTab !== "weapon") { sfx.tap(); shopTab = "weapon"; shopScrollY = 0; } return;
+    }
+    if (p_inRange(x, y, SHOP_TAB_SPECIAL_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) {
+      if (shopTab !== "special") { sfx.tap(); shopTab = "special"; shopScrollY = 0; } return;
+    }
+    if (p_inRange(x, y, SHOP_TAB_UPGRADE_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) {
+      if (shopTab !== "upgrade") { sfx.tap(); shopTab = "upgrade"; shopScrollY = 0; } return;
+    }
+    if (p_inRange(x, y, SHOP_TAB_COSMETIC_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) {
+      if (shopTab !== "cosmetic") { sfx.tap(); shopTab = "cosmetic"; shopScrollY = 0; } return;
+    }
+    const backBtnY = H - 45, backBtnW = 200, backBtnX = (W - backBtnW) / 2;
+    if (p_inRange(x, y, backBtnX, backBtnY - 22, backBtnW, 44)) {
+      sfx.tap(); shopScreen = false; titleScreen = true; return;
+    }
+    const listY = SHOP_TAB_Y + SHOP_TAB_H + 20;
+    if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < listY || y > H - 70) return;
+    const localY = y - listY + shopScrollY;
+    const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
+    const list = shopTab === "weapon" ? getShopWeapons() : shopTab === "special" ? getShopSpecials() : shopTab === "upgrade" ? UPGRADE_ORDER : getShopCosmetics();
+    if (idx < 0 || idx >= list.length) return;
+    if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) > MENU_ITEM_HEIGHT) return;
+    const key = list[idx];
+    if (shopTab === "weapon") {
+      if (ownsWeapon(key)) return;
+      if (buyWeapon(key)) { sfx.coin(); showShopMessage(`「${weapons[key].name}」を購入しました！`, "#88ff88"); shake(15); flash("#88ff88", 6); }
+      else { showShopMessage(`コインが足りません（必要: ${getWeaponPrice(key)} / 所持: ${saveData.coins}）`, "#ff6666"); shake(10); flash("#ff6666", 4); }
+    } else if (shopTab === "special") {
+      if (ownsSpecial(key)) return;
+      if (buySpecial(key)) { sfx.coin(); showShopMessage(`「${specials[key].name}」を購入しました！`, "#88ff88"); shake(15); flash("#88ff88", 6); }
+      else { showShopMessage(`コインが足りません（必要: ${getSpecialPrice(key)} / 所持: ${saveData.coins}）`, "#ff6666"); shake(10); flash("#ff6666", 4); }
+    } else if (shopTab === "upgrade") {
+      if (isUpgradeMaxed(key)) { showShopMessage("この強化は最大レベルです", "#ffcc00"); return; }
+      if (buyUpgrade(key)) { sfx.coin(); showShopMessage(`「${UPGRADES[key].name}」をLv${getUpgradeLevel(key)}に強化！`, "#88ff88"); shake(15); flash(UPGRADES[key].color, 6); }
+      else { showShopMessage(`コインが足りません（必要: ${getUpgradePrice(key)} / 所持: ${saveData.coins}）`, "#ff6666"); shake(10); flash("#ff6666", 4); }
+    } else {
+      if (ownsCosmetic(key)) {
+        sfx.tap(); equipCosmetic(key);
+        showShopMessage(`「${cosmetics[key].name}」を装備しました！`, "#88ff88");
+        shake(8); flash(cosmetics[key].color, 5);
+        if (cosmetics[key].kind === "theme") createStars();
+        return;
+      }
+      if (buyCosmetic(key)) { sfx.coin(); showShopMessage(`「${cosmetics[key].name}」を購入しました！`, "#88ff88"); shake(15); flash("#88ff88", 6); }
+      else { showShopMessage(`コインが足りません（必要: ${getCosmeticPrice(key)} / 所持: ${saveData.coins}）`, "#ff6666"); shake(10); flash("#ff6666", 4); }
+    }
+    return;
+  }
+  if (missionScreen) {
+    const backBtnY = H - 45, backBtnW = 200, backBtnX = (W - backBtnW) / 2;
+    if (p_inRange(x, y, backBtnX, backBtnY - 22, backBtnW, 44)) {
+      sfx.tap(); missionScreen = false; titleScreen = true; return;
+    }
+    const listY = 120;
+    for (let i = 0; i < dailyMissions.length; i++) {
+      const m = dailyMissions[i];
+      const y2 = listY + i * 150;
+      if (p_inRange(x, y, MENU_MARGIN, y2 + 100, MENU_WIDTH, 36)) {
+        if (!m.claimed && isMissionComplete(m)) {
+          if (claimMissionReward(i)) {
+            shake(20); flash("#ffd700", 8); chroma(10);
+            burst(W/2, H/2, 60, "#ffd700"); burst(W/2, H/2, 30, "#ffffff");
+          }
+        }
+        return;
+      }
+    }
+    return;
+  }
+  if (challengeScreen) {
+    const backBtnY = H - 45, backBtnW = 200, backBtnX = (W - backBtnW) / 2;
+    if (p_inRange(x, y, backBtnX, backBtnY - 22, backBtnW, 44)) {
+      sfx.tap(); challengeScreen = false; titleScreen = true; return;
+    }
+    const listY = 90;
+    for (let i = 0; i < CHALLENGE_ORDER.length; i++) {
+      const y2 = listY + i * 60;
+      if (y2 > H - 100) break;
+      if (p_inRange(x, y, MENU_MARGIN, y2, MENU_WIDTH, 54)) {
+        sfx.tap();
+        const key = CHALLENGE_ORDER[i];
+        applyChallenge(key);
+        challengeScreen = false; titleScreen = false;
+        weaponMenu = true; specialMenu = false;
+        fusionMode = false; quickMode = false;
+        menuScrollY = 0;
+        shake(15); flash(CHALLENGES[key].color, 6);
+        return;
+      }
+    }
+    if (p_inRange(x, y, MENU_MARGIN, H - 100, MENU_WIDTH, 36)) {
+      sfx.tap(); applyChallenge(null);
+      challengeScreen = false; titleScreen = false;
+      weaponMenu = true; specialMenu = false;
+      fusionMode = false; quickMode = false;
+      menuScrollY = 0;
+      shake(15); flash("#00ffcc", 6);
+      return;
+    }
+    return;
+  }
+  if (studySelectScreen) {
+    const backBtnY = H - 45, backBtnW = 200, backBtnX = (W - backBtnW) / 2;
+    if (p_inRange(x, y, backBtnX, backBtnY - 22, backBtnW, 44)) {
+      sfx.tap(); studySelectScreen = false; titleScreen = true; return;
+    }
+    const btnY1 = 200, btnY2 = 270, btnY3 = 340;
+    const btnW = 280, btnH = 55, btnX = (W - btnW) / 2;
+    if (p_inRange(x, y, btnX, btnY1, btnW, btnH)) { startStudyMode(1); return; }
+    if (p_inRange(x, y, btnX, btnY2, btnW, btnH)) { startStudyMode(2); return; }
+    if (p_inRange(x, y, btnX, btnY3, btnW, btnH)) { startStudyMode(3); return; }
+    return;
+  }
+  if (specialMenu) {
+    const list = getAvailableSpecials();
+    if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < MENU_TOP || y > H) return;
+    const localY = y - MENU_TOP + specialMenuScrollY;
+    const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
+    if (idx < 0 || idx >= list.length) return;
+    if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) <= MENU_ITEM_HEIGHT) selectSpecial(list[idx]);
+    return;
+  }
+  if (weaponMenu) {
+    if (fusionMode) {
+      if (fusionSelected.length >= 2) {
+        const btnY = H - 45, btnW = 220, btnX = (W - btnW) / 2;
+        if (p_inRange(x, y, btnX, btnY - 22, btnW, 44)) { startFusionGame(); return; }
+      }
+      if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < MENU_TOP || y > H - 60) return;
+      const localY = y - MENU_TOP + menuScrollY;
+      const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
+      const avail = getAvailableWeapons();
+      if (idx < 0 || idx >= avail.length) return;
+      if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) > MENU_ITEM_HEIGHT) return;
+      const key = avail[idx];
+      sfx.tap();
+      const i = fusionSelected.indexOf(key);
+      if (i >= 0) fusionSelected.splice(i, 1);
+      else fusionSelected.push(key);
+      return;
+    }
+    if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < MENU_TOP || y > H) return;
+    const localY = y - MENU_TOP + menuScrollY;
+    const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
+    const avail = getAvailableWeapons();
+    if (idx < 0 || idx >= avail.length) return;
+    if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) <= MENU_ITEM_HEIGHT) selectWeapon(avail[idx]);
+  }
+}
+
+/* ============ キーボード ============ */
 window.addEventListener("keydown", e => {
   const key = e.key.toLowerCase();
   keys[key] = true;
   if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(key)) e.preventDefault();
   initAudio();
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-
   if (titleScreen && showDailyBonusPopup) { claimDailyBonus(); return; }
-
   if (settingsScreen) {
     if (key === "escape") { settingsScreen = false; titleScreen = true; return; }
     return;
   }
-
   if (pauseScreen) {
     if (key === "escape") {
       if (pauseBackToTitleConfirm) pauseBackToTitleConfirm = false;
       else pauseScreen = false;
       return;
     }
-    if (key === "enter") {
-      if (pauseBackToTitleConfirm) {
-        pauseBackToTitleConfirm = false;
-        pauseScreen = false;
-        abortGameToTitle();
-      }
+    if (key === "enter" && pauseBackToTitleConfirm) {
+      pauseBackToTitleConfirm = false; pauseScreen = false; abortGameToTitle();
       return;
     }
     return;
   }
-
   if (studyQuizActive && studyQuiz) {
     if (/^[1-4]$/.test(key)) answerStudyQuiz(Number(key) - 1);
     return;
   }
-
-  if (missionScreen) {
-    if (key === "escape" || key === "q") { missionScreen = false; titleScreen = true; }
-    return;
-  }
-
-  if (challengeScreen) {
-    if (key === "escape" || key === "q") { challengeScreen = false; titleScreen = true; }
-    return;
-  }
-
+  if (missionScreen) { if (key === "escape" || key === "q") { missionScreen = false; titleScreen = true; } return; }
+  if (challengeScreen) { if (key === "escape" || key === "q") { challengeScreen = false; titleScreen = true; } return; }
   if (studySelectScreen) {
     if (key === "escape" || key === "q") { studySelectScreen = false; titleScreen = true; }
     if (key === "1") { startStudyMode(1); return; }
@@ -2179,20 +1741,19 @@ window.addEventListener("keydown", e => {
     if (key === "3") { startStudyMode(3); return; }
     return;
   }
-
   if (titleScreen) {
     if (key === "1") { fxMode = "chaos"; applyFxMode(); return; }
     if (key === "2") { fxMode = "normal"; applyFxMode(); return; }
     if (key === "3") { fxMode = "safe"; applyFxMode(); return; }
     if (key === "f") {
-      studyMode = false;
-      fusionMode = true; quickMode = false; fusionSelected = []; applyChallenge(null);
+      studyMode = false; fusionMode = true; quickMode = false;
+      fusionSelected = []; applyChallenge(null);
       titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0;
       return;
     }
     if (key === "q") {
-      studyMode = false;
-      quickMode = true; fusionMode = false; fusionSelected = []; applyChallenge(null);
+      studyMode = false; quickMode = true; fusionMode = false;
+      fusionSelected = []; applyChallenge(null);
       titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0;
       return;
     }
@@ -2200,25 +1761,16 @@ window.addEventListener("keydown", e => {
     if (key === "m") { checkDailyMissions(); missionScreen = true; titleScreen = false; return; }
     if (key === "c") { challengeScreen = true; titleScreen = false; return; }
     if (key === "t") { studySelectScreen = true; titleScreen = false; return; }
-    studyMode = false;
-    titleScreen = false;
+    if (key === "g") { rollGacha(); return; }
+    studyMode = false; titleScreen = false;
     quickMode = false; fusionMode = false; applyChallenge(null);
     weaponMenu = true; specialMenu = false; menuScrollY = 0;
     shake(15);
     if (fxMode !== "safe") flash("#00ffcc", 6);
     return;
   }
-
-  if (shopScreen) {
-    if (key === "escape" || key === "q") { shopScreen = false; titleScreen = true; return; }
-    return;
-  }
-
-  if (specialMenu) {
-    if (key === "escape" || key === "q") { specialMenu = false; weaponMenu = true; fusionSelected = []; fusionMode = false; return; }
-    return;
-  }
-
+  if (shopScreen) { if (key === "escape" || key === "q") { shopScreen = false; titleScreen = true; } return; }
+  if (specialMenu) { if (key === "escape" || key === "q") { specialMenu = false; weaponMenu = true; fusionSelected = []; fusionMode = false; } return; }
   if (weaponMenu) {
     if (fusionMode) {
       if (key === "enter" && fusionSelected.length >= 2) { startFusionGame(); return; }
@@ -2226,7 +1778,7 @@ window.addEventListener("keydown", e => {
     }
     return;
   }
-  if (gameOver && key === "enter") { if (gameClear) { returnToTitle(); } else { resetGame(); } return; }
+  if (gameOver && key === "enter") { if (gameClear) returnToTitle(); else resetGame(); return; }
   if (key === " " && !gameOver) { tryDash(); return; }
   if (key === "escape" && !gameOver) { pauseScreen = true; pauseBackToTitleConfirm = false; return; }
   if (key === "e" && !gameOver && !challengeNoSpecials && specialGauge >= SPECIAL_MAX && specialActive <= 0 && !studyMode) {
@@ -2238,6 +1790,7 @@ window.addEventListener("keydown", e => {
 });
 window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
 
+/* ============ タイトル復帰 ============ */
 function returnToTitle() {
   titleScreen = true; gameOver = false; gameClear = false;
   weaponMenu = false; specialMenu = false; shopScreen = false;
@@ -2254,19 +1807,14 @@ function returnToTitle() {
   createStars();
   checkDailyMissions();
 }
-
 function abortGameToTitle() {
   const earned = calcAbortCoins();
   saveData.coins = (saveData.coins || 0) + earned;
   saveData.totalCoinsEarned = (saveData.totalCoinsEarned || 0) + earned;
   lastEarnedCoins = earned;
-  if (score > saveData.highScore) {
-    saveData.highScore = score;
-    highScore = score;
-  }
+  if (score > saveData.highScore) { saveData.highScore = score; highScore = score; }
   updateMissionProgressFromSession();
-  writeSave();
-  sfx.coin();
+  writeSave(); sfx.coin();
   shake(30); flash("#ffd700", 10); chroma(15);
   abortPopup = { timer: 180, earned };
   returnToTitle();
@@ -2280,13 +1828,10 @@ function calcAbortCoins() {
   coins = Math.floor(coins * getCoinRateMult());
   return coins;
 }
-
 function resetGame() {
   score = 0;
   const startLv = 1 + getStartLevelBonus();
-  level = startLv;
-  exp = 0;
-  nextExp = 6 + (startLv - 1) * 8;
+  level = startLv; exp = 0; nextExp = 6 + (startLv - 1) * 8;
   time = 0; difficulty = 1; rainbowHue = 0; gameOver = false;
   combo = 0; comboTimer = 0; maxCombo = 0;
   wave = 1; waveTimer = 0; bossActive = false;
@@ -2316,20 +1861,37 @@ function resetGame() {
   kingCrimsonTimer = 0; stickyFingersTimer = 0; stickyFingersTarget = null;
   gerTimer = 0; whiteSnakeTimer = 0; determinationActive = 0;
   boneBarriers = []; gasterBlasters = []; blueAttacks = [];
-  resetMissionSession();
-  missionSession.plays = 1;
+  resetMissionSession(); missionSession.plays = 1;
   menuScrollY = 0; specialMenuScrollY = 0;
-  studyTimer = studyTimerMax;
-  studyQuiz = null;
-  studyQuizActive = false;
-  studyCorrectCount = 0;
-  studyBurstGauge = 0;
-  pauseScreen = false;
-  pauseBackToTitleConfirm = false;
-  createStars();
-  shake(25); flash("#00ffcc", 6);
+  studyTimer = studyTimerMax; studyQuiz = null; studyQuizActive = false;
+  studyCorrectCount = 0; studyBurstGauge = 0;
+  pauseScreen = false; pauseBackToTitleConfirm = false;
+  createStars(); shake(25); flash("#00ffcc", 6);
+}
+let powerUpFlash = null;
+
+/* ============ ダッシュ ============ */
+function tryDash() {
+  if (player.dashCooldown > 0 || player.dashTimer > 0) return;
+  let dx = 0, dy = 0;
+  if (keys.arrowleft || keys.a) dx -= 1;
+  if (keys.arrowright || keys.d) dx += 1;
+  if (keys.arrowup || keys.w) dy -= 1;
+  if (keys.arrowdown || keys.s) dy += 1;
+  if (dx === 0 && dy === 0) dy = -1;
+  const len = Math.hypot(dx, dy);
+  player.dashVx = dx/len * 14;
+  player.dashVy = dy/len * 14;
+  player.dashTimer = 12;
+  player.dashCooldown = Math.floor(45 * getDashCdMult());
+  player.invincible = Math.max(player.invincible, 14);
+  sfx.dash();
+  burst(player.x, player.y, 20, getPlayerColor());
+  burst(player.x, player.y, 10, "#ffffff");
+  shake(12); flash(getPlayerColor(), 4);
 }
 
+/* ============ 必殺技発動 ============ */
 function activateSpecial() {
   if (challengeNoSpecials) return;
   if (studyMode && studyBurstGauge < STUDY_BURST_MAX) return;
@@ -2338,7 +1900,6 @@ function activateSpecial() {
   if (studyMode) studyBurstGauge = 0;
   else specialGauge = 0;
   hitStopAdd(60); shake(80); flash("#ffffff", 30); chroma(50); zoomPulse = 1.5;
-
   if (studyMode && selectedSpecial === "knowledgeburst") fireKnowledgeBurst();
   else if (selectedSpecial === "fireworks") fireFireworks();
   else if (selectedSpecial === "theworld") fireTheWorldSpecial();
@@ -2356,16 +1917,13 @@ function activateSpecial() {
   else if (selectedSpecial === "bonesspecial") fireBonesSpecial();
   enemyBullets = [];
 }
-
 function fireKnowledgeBurst() {
   const baseDmg = 100 + level * 15 + studyCorrectCount * 20;
   for (let k = 0; k < 30; k++) {
     setTimeout(() => {
-      const bx = Math.random() * W;
-      const by = Math.random() * H;
+      const bx = Math.random() * W, by = Math.random() * H;
       shockwaves.push({ x: bx, y: by, radius: 5, maxRadius: 200, life: 30, color: "102,204,255" });
-      burst(bx, by, 40, "#66ccff");
-      burst(bx, by, 20, "#ffffff");
+      burst(bx, by, 40, "#66ccff"); burst(bx, by, 20, "#ffffff");
       flash("#ffffff", 4);
     }, k * 40);
   }
@@ -2373,15 +1931,13 @@ function fireKnowledgeBurst() {
     const e = enemies[i];
     e.hp -= baseDmg;
     showBigDamage(e.x, e.y, baseDmg, "#66ccff");
-    burst(e.x, e.y, 40, "#66ccff");
-    burst(e.x, e.y, 20, "#ffffff");
+    burst(e.x, e.y, 40, "#66ccff"); burst(e.x, e.y, 20, "#ffffff");
     if (e.hp <= 0) killEnemy(i);
   }
   studyBurstGauge = 0;
   shake(150); flash("#66ccff", 30); chroma(50);
   showBigDamage(W/2, H/2 - 100, "KNOWLEDGE BURST!", "#66ccff");
 }
-
 function fireFireworks() {
   specialFireworks = []; specialParticles = [];
   for (let f = 0; f < 20; f++) {
@@ -2423,8 +1979,7 @@ function fireKingCrimson() {
     const dmg = 50 + level * 4;
     e.hp -= dmg;
     showBigDamage(e.x, e.y, dmg, "#cc0044");
-    burst(e.x, e.y, 40, "#cc0044");
-    burst(e.x, e.y, 20, "#ffffff");
+    burst(e.x, e.y, 40, "#cc0044"); burst(e.x, e.y, 20, "#ffffff");
     if (e.hp <= 0) killEnemy(i);
   }
   shake(100); flash("#cc0044", 25); chroma(30);
@@ -2443,8 +1998,7 @@ function fireGER() {
     const dmg = 80 + level * 5;
     e.hp -= dmg;
     showBigDamage(e.x, e.y, dmg, "#ffdd00");
-    burst(e.x, e.y, 60, "#ffdd00");
-    burst(e.x, e.y, 30, "#ffffff");
+    burst(e.x, e.y, 60, "#ffdd00"); burst(e.x, e.y, 30, "#ffffff");
     if (e.hp <= 0) killEnemy(i);
   }
   shake(120); flash("#ffdd00", 30); chroma(40);
@@ -2519,8 +2073,7 @@ function fireDeterminationSpecial() {
     const dmg = 70 + level * 5;
     e.hp -= dmg;
     showBigDamage(e.x, e.y, dmg, "#ff0000");
-    burst(e.x, e.y, 50, "#ff0000");
-    burst(e.x, e.y, 25, "#ffffff");
+    burst(e.x, e.y, 50, "#ff0000"); burst(e.x, e.y, 25, "#ffffff");
     if (e.hp <= 0) killEnemy(i);
   }
   shake(100); flash("#ff0000", 25); chroma(35);
@@ -2589,6 +2142,7 @@ function fireBonesSpecial() {
   shake(70); flash("#eeeeee", 20); chroma(20);
 }
 
+/* ============ 特殊タイマー ============ */
 function updateSpecials() {
   if (kingCrimsonTimer > 0) kingCrimsonTimer--;
   if (gerTimer > 0) gerTimer--;
@@ -2618,7 +2172,6 @@ function updateSpecials() {
     }
   }
 }
-
 function updateSpecial() {
   if (specialActive > 0) {
     specialActive--;
@@ -2668,6 +2221,7 @@ function updateSpecial() {
   }
 }
 
+/* ============ スケーリング ============ */
 function enemyHpScale() {
   const lv = level;
   let scale = 1 + (lv - 1) * 0.22;
@@ -2682,6 +2236,9 @@ function enemySpeedScale() {
   if (lv > 15) scale += (lv - 15) * 0.012;
   if (lv > 35) scale += (lv - 35) * 0.018;
   if (challengeFastEnemy) scale *= 1.5;
+  const dayPhase = (time % 7200) / 7200;
+  const nightFactor = 0.5 + Math.sin(dayPhase * TAU - Math.PI/2) * 0.5;
+  scale *= (1 + nightFactor * 0.3);
   return scale;
 }
 function enemyShootScale() {
@@ -2698,6 +2255,7 @@ function enemyBulletSpeedScale() {
   return scale;
 }
 
+/* ============ 敵生成 ============ */
 function spawnEnemy(forceType) {
   const roll = forceType ? 0 : Math.random();
   const hpScale = enemyHpScale();
@@ -2718,40 +2276,54 @@ function spawnEnemy(forceType) {
   } else if (roll < .10) {
     const hp = (8 + Math.floor(difficulty*2)) * hpScale;
     e = { x: 30 + Math.random()*(W-60), y: -30, r: 19,
-      hp: hp, maxHp: hp,
-      speed: (1.1 + difficulty*.3) * spdScale,
+      hp, maxHp: hp, speed: (1.1 + difficulty*.3) * spdScale,
       type: "heavy", score: 5, shootRate: (.010 + difficulty*.003 + level*.0008) * shootScale };
   } else if (roll < .20) {
     const hp = (4 + Math.floor(difficulty)) * hpScale;
     e = { x: 25 + Math.random()*(W-50), y: -25, r: 15,
-      hp: hp, maxHp: hp,
-      speed: (1.6 + difficulty*.4) * spdScale,
+      hp, maxHp: hp, speed: (1.6 + difficulty*.4) * spdScale,
       type: "splitter", score: 3, shootRate: (.008 + difficulty*.002) * shootScale,
       wave: Math.random()*TAU, wavePower: 1 + Math.random()*1.5 };
   } else if (roll < .30) {
     const hp = (20 + Math.floor(difficulty*3)) * hpScale;
     e = { x: 40 + Math.random()*(W-80), y: -40, r: 26,
-      hp: hp, maxHp: hp,
-      speed: (.55 + difficulty*.12) * spdScale,
+      hp, maxHp: hp, speed: (.55 + difficulty*.12) * spdScale,
       type: "tank", score: 12, shootRate: (.008 + difficulty*.0015) * shootScale };
   } else if (roll < .48) {
     const hp = 4 * hpScale;
     e = { x: 30 + Math.random()*(W-60), y: -30, r: 13,
-      hp: hp, maxHp: hp,
-      speed: (3.5 + difficulty*.8) * spdScale,
+      hp, maxHp: hp, speed: (3.5 + difficulty*.8) * spdScale,
       type: "dasher", score: 4, shootRate: 0,
       dashTimer: 40 + Math.random()*40, dashing: false, dashVx: 0, dashVy: 0 };
   } else if (roll < .60) {
     const hp = (6 + Math.floor(difficulty*1.5)) * hpScale;
     e = { x: 40 + Math.random()*(W-80), y: -40, r: 16,
-      hp: hp, maxHp: hp,
-      speed: (.9 + difficulty*.2) * spdScale,
+      hp, maxHp: hp, speed: (.9 + difficulty*.2) * spdScale,
       type: "shooter", score: 6, shootRate: (.030 + difficulty*.008 + level*.0022) * shootScale, burstCooldown: 0 };
+  } else if (roll < .70) {
+    const hp = (7 + Math.floor(difficulty*2)) * hpScale;
+    e = { x: 30 + Math.random()*(W-60), y: -30, r: 17,
+      hp, maxHp: hp, speed: (1.0 + difficulty*.2) * spdScale,
+      type: "orbiter", score: 7,
+      shootRate: (.012 + difficulty*.003) * shootScale,
+      orbitPhase: Math.random()*TAU, orbitR: 40 + Math.random()*30 };
+  } else if (roll < .78) {
+    const hp = (12 + Math.floor(difficulty*2)) * hpScale;
+    e = { x: 30 + Math.random()*(W-60), y: -30, r: 22,
+      hp, maxHp: hp, speed: (.7 + difficulty*.15) * spdScale,
+      type: "shield", score: 10,
+      shootRate: (.008 + difficulty*.002) * shootScale,
+      shieldHp: hp * 0.6, shielded: true };
+  } else if (roll < .85) {
+    const hp = 5 * hpScale;
+    e = { x: 30 + Math.random()*(W-60), y: -30, r: 14,
+      hp, maxHp: hp, speed: (2.8 + difficulty*.5) * spdScale,
+      type: "bomber", score: 5, shootRate: 0,
+      fuse: 0, targetY: H/2 + Math.random()*(H/2) };
   } else {
     const hp = (3 + Math.floor(difficulty)) * hpScale;
     e = { x: 20 + Math.random()*(W-40), y: -20, r: 12,
-      hp: hp, maxHp: hp,
-      speed: (1.9 + difficulty*.5) * spdScale,
+      hp, maxHp: hp, speed: (1.9 + difficulty*.5) * spdScale,
       type: "normal", score: 1, shootRate: (.006 + difficulty*.002 + level*.0007) * shootScale,
       wave: Math.random()*TAU, wavePower: 1 };
   }
@@ -2767,6 +2339,7 @@ function spawnBoss() {
   burst(W/2, 80, 50, "#ffcc00");
 }
 
+/* ============ 経験値 ============ */
 function gainExperience(amount) {
   exp += amount;
   while (exp >= nextExp) {
@@ -2783,7 +2356,6 @@ function gainExperience(amount) {
     if (level > missionSession.maxLevel) missionSession.maxLevel = level;
   }
 }
-
 function triggerPowerUp() {
   const key = selectedWeapon;
   if (!key) return;
@@ -2802,24 +2374,9 @@ function triggerPowerUp() {
   shockwaves.push({ x: player.x, y: player.y, radius: 10, maxRadius: 300, life: 30, color: "255,255,255" });
   showDamage(player.x, player.y - 40, `POWER UP Lv${lv}!`, weapons[key].color);
 }
-
 function pw(key) { return weaponPower[key] || 0; }
 
-function showDamage(x, y, amount, color) {
-  damageNumbers.push({
-    x, y, vy: -2, life: 45,
-    text: typeof amount === "number" ? Math.round(amount*10)/10 : amount,
-    color: color || "#ffffff", scale: 1
-  });
-}
-function showBigDamage(x, y, amount, color) {
-  damageNumbers.push({
-    x, y, vy: -3, life: 70,
-    text: typeof amount === "number" ? Math.round(amount*10)/10 : amount,
-    color: color || "#ffffff", scale: 2.2
-  });
-}
-
+/* ============ パワーアップアイテム ============ */
 function maybeDropPowerup(x, y, type) {
   let chance = 0.08;
   if (type === "boss") chance = 0.6;
@@ -2836,8 +2393,7 @@ function collectPowerup(p) {
   if (p.kind === "heal") {
     player.hp = Math.min(player.maxHp, player.hp + 15);
     showDamage(p.x, p.y, "+15 HP", "#00ff66");
-    burst(p.x, p.y, 30, "#00ff66");
-    shake(8);
+    burst(p.x, p.y, 30, "#00ff66"); shake(8);
   } else if (p.kind === "bomb") {
     for (let i = enemies.length-1; i >= 0; i--) {
       const e = enemies[i];
@@ -2846,8 +2402,7 @@ function collectPowerup(p) {
     }
     shockwaves.push({ x:player.x, y:player.y, radius:10, maxRadius:800, life:50, color:"255,200,0" });
     shake(60); flash("#ffcc00", 15); chroma(20); hitStopAdd(10);
-    burst(p.x, p.y, 150, "#ffcc00");
-    burst(p.x, p.y, 80, "#ffffff");
+    burst(p.x, p.y, 150, "#ffcc00"); burst(p.x, p.y, 80, "#ffffff");
   } else if (p.kind === "exp") {
     gainExperience(3);
     showDamage(p.x, p.y, "+EXP", "#66ccff");
@@ -2855,9 +2410,61 @@ function collectPowerup(p) {
   }
 }
 
+/* ============ コンボ ============ */
+let comboMilestones = {};
+function addCombo() {
+  combo++;
+  comboTimer = 120;
+  if (combo > maxCombo) maxCombo = combo;
+  if (combo > 0 && combo % 5 === 0) {
+    const hue = (combo * 37) % 360;
+    for (let i = 0; i < 20; i++) {
+      const edge = Math.floor(Math.random() * 4);
+      let x, y;
+      if (edge === 0) { x = Math.random()*W; y = 0; }
+      else if (edge === 1) { x = W; y = Math.random()*H; }
+      else if (edge === 2) { x = Math.random()*W; y = H; }
+      else { x = 0; y = Math.random()*H; }
+      particles.push({
+        x, y, vx: (W/2-x)*0.02, vy: (H/2-y)*0.02,
+        life: 40, color: `hsl(${hue},100%,65%)`, size: 4
+      });
+    }
+  }
+  const milestones = [5, 10, 15, 20, 30, 40, 50, 75, 100];
+  const colors = ["#00ffcc", "#99ff66", "#ffcc00", "#ff8844", "#ff3366", "#ff00ff", "#00ffff", "#ffffff", "#ff00ff"];
+  for (let i = 0; i < milestones.length; i++) {
+    const m = milestones[i];
+    if (combo === m && !comboMilestones[m]) {
+      comboMilestones[m] = true;
+      sfx.combo();
+      const col = colors[i];
+      shake(25); flash(col, 8); chroma(12); hitStopAdd(4);
+      burst(player.x, player.y, 60, col);
+      burst(player.x, player.y, 30, "#ffffff");
+    }
+  }
+}
+function comboMultiplier() { return 1 + Math.floor(combo/5) * 0.5; }
+
+/* ============ 敵撃破 ============ */
 function killEnemy(idx) {
   const e = enemies[idx];
   if (!e) return;
+  if (e.type === "boss" && !e.phase2 && bossKillCount < BOSS_KILL_TARGET && !studyMode && !quickMode) {
+    e.phase2 = true;
+    e.maxHp = e.maxHp * 1.5;
+    e.hp = e.maxHp;
+    e.speed *= 1.4;
+    e.r *= 1.2;
+    e.bossPhase = 0;
+    showBigDamage(e.x, e.y, "PHASE 2!", "#ff0044");
+    sfx.bossAppear();
+    shake(80); flash("#ff0044", 20); chroma(25); hitStopAdd(20);
+    burst(e.x, e.y, 100, "#ff0044");
+    burst(e.x, e.y, 50, "#ffffff");
+    return;
+  }
   const big = e.type === "heavy" || e.type === "boss" || e.type === "tank";
   if (big) sfx.enemyDie();
   burst(e.x, e.y, big ? 120 : 40,
@@ -2887,8 +2494,7 @@ function killEnemy(idx) {
     missionSession.bossKills = bossKillCount;
     const target = studyMode ? 1 : (quickMode ? 1 : BOSS_KILL_TARGET);
     if (bossKillCount >= target && !gameClear) {
-      gameClear = true;
-      gameOver = true;
+      gameClear = true; gameOver = true;
       missionSession.cleared = true;
       recordGameResult(true);
       sfx.clear();
@@ -2897,9 +2503,7 @@ function killEnemy(idx) {
         setTimeout(() => {
           const bx = Math.random() * W;
           const by = Math.random() * H;
-          burst(bx, by, 70, "#ffcc00");
-          burst(bx, by, 35, "#ffffff");
-          burst(bx, by, 20, "#ff00ff");
+          burst(bx, by, 70, "#ffcc00"); burst(bx, by, 35, "#ffffff"); burst(bx, by, 20, "#ff00ff");
           flash("#ffffff", 6); shake(35);
         }, k * 110);
       }
@@ -2929,21 +2533,18 @@ function killEnemy(idx) {
       const hpScale = enemyHpScale();
       const hp = 2 * hpScale;
       enemies.push({
-        x: e.x + (i ? 15 : -15), y: e.y,
-        r: 8, hp: hp, maxHp: hp, speed: e.speed*1.4,
-        type: "child", score: 2, shootRate: 0,
+        x: e.x + (i ? 15 : -15), y: e.y, r: 8,
+        hp, maxHp: hp, speed: e.speed*1.4, type: "child", score: 2, shootRate: 0,
         wave: Math.random()*TAU, wavePower: 2
       });
     }
   }
 }
-
 function escapeEnemy(idx) {
   const e = enemies[idx];
   if (!e) return;
   burst(e.x, Math.min(H-10, e.y), 20, "#ffaa44");
-  shake(6);
-  addCombo();
+  shake(6); addCombo();
   score += Math.round(e.score * comboMultiplier());
   if (score > missionSession.maxScore) missionSession.maxScore = score;
   gainExperience(1);
@@ -2957,23 +2558,13 @@ function escapeEnemy(idx) {
   if (Math.random() < chance) {
     const kinds = ["heal","bomb","exp"];
     const kind = kinds[Math.floor(Math.random()*kinds.length)];
-    powerups.push({
-      x: 40 + Math.random() * (W - 80),
-      y: -30,
-      vy: 1.2,
-      r: 14,
-      kind,
-      life: 600,
-      bob: Math.random()*TAU
-    });
+    powerups.push({ x: 40 + Math.random() * (W - 80), y: -30, vy: 1.2, r: 14, kind, life: 600, bob: Math.random()*TAU });
   }
   enemies.splice(idx, 1);
-}
-
+}/* ============ 武器発射 ============ */
 function addBullet(data) {
   bullets.push({ x:player.x, y:player.y, vx:0, vy:-10, size:4, damage:1, life:600, ...data });
 }
-
 function fireNormal() {
   const p = pw("normal");
   const count = 1 + (level - 1) + p * 2;
@@ -2989,18 +2580,12 @@ function fireNormal() {
 function fireSpiral() {
   const p = pw("spiral");
   addBullet({
-    vx: 0, vy: -11,
-    hue: 280,
-    size: 11 + p*1.5,
-    damage: 3 + p*1.2,
-    type: "spiral",
-    fuse: Math.max(10, 26 - p*2),
-    homing: 0,
-    blastRadius: 85 + level*10 + p*20,
-    trail: true
+    vx: 0, vy: -11, hue: 280,
+    size: 11 + p*1.5, damage: 3 + p*1.2,
+    type: "spiral", fuse: Math.max(10, 26 - p*2),
+    homing: 0, blastRadius: 85 + level*10 + p*20, trail: true
   });
-  sfx.shootHeavy();
-  shake(3);
+  sfx.shootHeavy(); shake(3);
 }
 function fireRapid() {
   const p = pw("rapid");
@@ -3011,22 +2596,22 @@ function fireRapid() {
 function fireKnife() {
   const p = pw("knife");
   const s = 8 + p;
-  addBullet({ x: player.x + Math.cos(knifeAngle)*18, y: player.y + Math.sin(knifeAngle)*18, vx: Math.cos(knifeAngle)*s, vy: Math.sin(knifeAngle)*s, size: 8 + p, damage: 3 + p*1.2, type:"knife", angle: knifeAngle, pierce: 2 + p });
-  sfx.shoot();
-  shake(3);
+  addBullet({
+    x: player.x + Math.cos(knifeAngle)*18, y: player.y + Math.sin(knifeAngle)*18,
+    vx: Math.cos(knifeAngle)*s, vy: Math.sin(knifeAngle)*s,
+    size: 8 + p, damage: 3 + p*1.2, type:"knife", angle: knifeAngle, pierce: 2 + p
+  });
+  sfx.shoot(); shake(3);
 }
 function fireMochi() {
   const p = pw("mochi");
   addBullet({
-    vx: 0, vy: -7,
-    size: 32 + level*2 + p*8,
+    vx: 0, vy: -7, size: 32 + level*2 + p*8,
     damage: 4 + level*.5 + p*2,
     pierce: 2 + Math.floor(level/3) + p,
-    type: "mochi",
-    knockbackPower: 20 + level*1.5 + p*5
+    type: "mochi", knockbackPower: 20 + level*1.5 + p*5
   });
-  sfx.shootHeavy();
-  shake(6);
+  sfx.shootHeavy(); shake(6);
 }
 function fireBoomerang() {
   const p = pw("boomerang");
@@ -3035,21 +2620,24 @@ function fireBoomerang() {
     const a = -Math.PI/2 + (i - (count-1)/2) * 0.35;
     addBullet({
       vx: Math.cos(a)*8, vy: Math.sin(a)*8,
-      size: 16 + p*2,
-      damage: 4 + Math.floor(level/3) + p*1.5,
-      type:"boomerang",
-      returning:false, life:400,
+      size: 16 + p*2, damage: 4 + Math.floor(level/3) + p*1.5,
+      type:"boomerang", returning:false, life:400,
       hitSet: new Set(), spin: Math.random()*TAU
     });
   }
-  sfx.shoot();
-  shake(4);
+  sfx.shoot(); shake(4);
 }
 function fireBlackHole() {
   const p = pw("blackhole");
-  addBullet({ vx:0, vy:-4, type:"blackhole", size:20, damage: .7 + level*.15 + p*.4, travel: Math.max(8, 40 - p*3), field: 280 + p*60, pullRadius: 100 + level*4 + p*25, coreRadius: 20 + level + p*4, pulse:0 });
-  sfx.special();
-  shake(10); chroma(5);
+  addBullet({
+    vx:0, vy:-4, type:"blackhole", size:20,
+    damage: .7 + level*.15 + p*.4,
+    travel: Math.max(8, 40 - p*3),
+    field: 280 + p*60,
+    pullRadius: 100 + level*4 + p*25,
+    coreRadius: 20 + level + p*4, pulse:0
+  });
+  sfx.special(); shake(10); chroma(5);
 }
 function fireFreeze() {
   const p = pw("freeze");
@@ -3061,71 +2649,111 @@ function fireShotgun() {
   const range = 180 + p*40;
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (i - (count-1)/2) * 0.14;
-    addBullet({ vx: Math.cos(a)*18, vy: Math.sin(a)*18, size: 6, damage: 2.5 + p*.8, type: "shotgun", maxRange: range, traveled: 0, hue: 10 + Math.random()*20, trail: true });
+    addBullet({
+      vx: Math.cos(a)*18, vy: Math.sin(a)*18,
+      size: 6, damage: 2.5 + p*.8,
+      type: "shotgun", maxRange: range, traveled: 0,
+      hue: 10 + Math.random()*20, trail: true
+    });
   }
-  sfx.shootHeavy();
-  shake(15); flash("#ff6644", 5); chroma(8);
+  sfx.shootHeavy(); shake(15); flash("#ff6644", 5); chroma(8);
 }
 function fireLaser() {
   const p = pw("laser");
-  bullets.push({ x: player.x, y: player.y, vx: 0, vy: -30, size: 16 + p*3, damage: 3 + level*.4 + p*1.5, type: "laser", angle: -Math.PI/2, pierce: 999, life: 40 + p*10 });
-  sfx.special();
-  shake(12); flash("#ff00ff", 6); chroma(10); hitStopAdd(2);
+  bullets.push({
+    x: player.x, y: player.y, vx: 0, vy: -30,
+    size: 16 + p*3, damage: 3 + level*.4 + p*1.5,
+    type: "laser", angle: -Math.PI/2, pierce: 999, life: 40 + p*10
+  });
+  sfx.special(); shake(12); flash("#ff00ff", 6); chroma(10); hitStopAdd(2);
 }
 function fireMissile() {
   const p = pw("missile");
   const count = 1 + Math.floor(level/3) + p;
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (i - (count-1)/2) * 0.5;
-    addBullet({ vx: Math.cos(a)*6, vy: Math.sin(a)*6, size: 8 + p, damage: 2.5 + p*.8, type: "missile", target: null, speed: 8 + p, trail: true });
+    addBullet({
+      vx: Math.cos(a)*6, vy: Math.sin(a)*6,
+      size: 8 + p, damage: 2.5 + p*.8,
+      type: "missile", target: null, speed: 8 + p, trail: true
+    });
   }
-  sfx.shoot();
-  shake(3);
+  sfx.shoot(); shake(3);
 }
 function fireMine() {
   const p = pw("mine");
-  mines.push({ x: player.x, y: player.y - 30, r: 14 + p*2, life: 600, damage: 6 + level + p*2, blastRadius: 70 + p*15, armTimer: 30, pulse: 0, type: "mine" });
-  sfx.tap();
-  shake(3);
+  mines.push({
+    x: player.x, y: player.y - 30, r: 14 + p*2, life: 600,
+    damage: 6 + level + p*2, blastRadius: 70 + p*15,
+    armTimer: 30, pulse: 0, type: "mine"
+  });
+  sfx.tap(); shake(3);
 }
 function fireFlame() {
   const p = pw("flame");
   const count = 4 + p;
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (Math.random()-.5)*0.6;
-    addBullet({ x: player.x + (Math.random()-.5)*20, y: player.y, vx: Math.cos(a)*(5 + Math.random()*3), vy: Math.sin(a)*(5 + Math.random()*3), size: 10 + Math.random()*8 + p*3, damage: .8 + p*.3, type: "flame", life: 40 + p*5 });
+    addBullet({
+      x: player.x + (Math.random()-.5)*20, y: player.y,
+      vx: Math.cos(a)*(5 + Math.random()*3), vy: Math.sin(a)*(5 + Math.random()*3),
+      size: 10 + Math.random()*8 + p*3, damage: .8 + p*.3,
+      type: "flame", life: 40 + p*5
+    });
   }
   if (time % 6 === 0) sfx.shoot();
 }
 function fireRailgun() {
   const p = pw("railgun");
-  addBullet({ x: player.x, y: player.y, vx: 0, vy: -40, size: 6 + p, damage: 6 + level*.8 + p*2, type: "railgun", pierce: 999, life: 60, hitSet: new Set() });
+  addBullet({
+    x: player.x, y: player.y, vx: 0, vy: -40,
+    size: 6 + p, damage: 6 + level*.8 + p*2,
+    type: "railgun", pierce: 999, life: 60, hitSet: new Set()
+  });
   sfx.special();
   shake(35); flash("#00eeff", 8); chroma(15); hitStopAdd(3); zoomPulse = 1.3;
   for (let i = 0; i < 30; i++) {
-    particles.push({ x: player.x + (Math.random()-.5)*50, y: player.y + i*15, vx: (Math.random()-.5)*6, vy: -8 - Math.random()*8, life: 22, color: i % 2 ? "#00eeff" : "#ffffff", size: 3 + Math.random()*3 });
+    particles.push({
+      x: player.x + (Math.random()-.5)*50, y: player.y + i*15,
+      vx: (Math.random()-.5)*6, vy: -8 - Math.random()*8,
+      life: 22, color: i % 2 ? "#00eeff" : "#ffffff", size: 3 + Math.random()*3
+    });
   }
 }
 function fireCluster() {
   const p = pw("cluster");
-  addBullet({ vx:0, vy:-9, size: 12 + p, damage: 1 + p*.4, type: "cluster", clusterFuse: Math.max(8, 35 - p*3), childCount: 8 + p*2, trail: true });
-  sfx.shoot();
-  shake(3);
+  addBullet({
+    vx:0, vy:-9, size: 12 + p, damage: 1 + p*.4,
+    type: "cluster", clusterFuse: Math.max(8, 35 - p*3),
+    childCount: 8 + p*2, trail: true
+  });
+  sfx.shoot(); shake(3);
 }
 function fireVampire() {
   const p = pw("vampire");
   const count = 1 + Math.floor(level/2) + p;
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (i - (count-1)/2) * 0.15;
-    addBullet({ vx: Math.cos(a)*13, vy: Math.sin(a)*13, size: 6 + p, damage: 1.5 + p*.5, type: "vampire", stealRatio: 0.3 + p*0.05, hue: 330, trail: true });
+    addBullet({
+      vx: Math.cos(a)*13, vy: Math.sin(a)*13,
+      size: 6 + p, damage: 1.5 + p*.5,
+      type: "vampire", stealRatio: 0.3 + p*0.05,
+      hue: 330, trail: true
+    });
   }
   if (time % 4 === 0) sfx.shoot();
 }
 function fireGravity() {
   const p = pw("gravity");
-  addBullet({ vx:0, vy:-5, type: "gravity", size: 18 + p*3, damage: .5 + level*.1 + p*.3, travel: Math.max(5, 30 - p*3), field: 240 + p*40, pullRadius: 120 + level*5 + p*20, pullForce: 3 + p*0.8 });
-  sfx.special();
-  shake(8);
+  addBullet({
+    vx:0, vy:-5, type: "gravity", size: 18 + p*3,
+    damage: .5 + level*.1 + p*.3,
+    travel: Math.max(5, 30 - p*3),
+    field: 240 + p*40,
+    pullRadius: 120 + level*5 + p*20,
+    pullForce: 3 + p*0.8
+  });
+  sfx.special(); shake(8);
 }
 function fireSword() {
   const p = pw("sword");
@@ -3154,36 +2782,53 @@ function fireSword() {
   for (let i = 0; i < 50; i++) {
     const a = swordAngle + (Math.random()-.5) * Math.PI/2;
     const r = 30 + Math.random()*range;
-    particles.push({ x: player.x + Math.cos(a)*r, y: player.y + Math.sin(a)*r, vx: Math.cos(a)*8, vy: Math.sin(a)*8, life: 12 + Math.random()*10, color: i % 3 === 0 ? "#ffff00" : "#ffffff", size: 2 + Math.random()*3 });
+    particles.push({
+      x: player.x + Math.cos(a)*r, y: player.y + Math.sin(a)*r,
+      vx: Math.cos(a)*8, vy: Math.sin(a)*8,
+      life: 12 + Math.random()*10,
+      color: i % 3 === 0 ? "#ffff00" : "#ffffff",
+      size: 2 + Math.random()*3
+    });
   }
-  sfx.shootHeavy();
-  shake(15); flash("#ffffff", 5); chroma(8);
+  sfx.shootHeavy(); shake(15); flash("#ffffff", 5); chroma(8);
 }
 function fireIceShard() {
   const p = pw("iceshard");
   const count = 3 + p;
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (i - (count-1)/2) * 0.22;
-    addBullet({ vx: Math.cos(a)*14, vy: Math.sin(a)*14, size: 7, damage: 1.2 + p*.4, type: "iceshard", slowDuration: 60 + p*20, trail: true });
+    addBullet({
+      vx: Math.cos(a)*14, vy: Math.sin(a)*14,
+      size: 7, damage: 1.2 + p*.4,
+      type: "iceshard", slowDuration: 60 + p*20, trail: true
+    });
   }
   if (time % 3 === 0) sfx.shoot();
 }
 function firePoison() {
   const p = pw("poison");
-  addBullet({ vx:0, vy:-10, size: 10 + p*2, damage: 1 + p*.3, type: "poison", poisonDPS: .3 + p*.15, poisonTime: 180, trail: true });
+  addBullet({
+    vx:0, vy:-10, size: 10 + p*2, damage: 1 + p*.3,
+    type: "poison", poisonDPS: .3 + p*.15, poisonTime: 180, trail: true
+  });
 }
 function fireBow() {
   const p = pw("bow");
-  addBullet({ vx: 0, vy: -18, size: 5 + p, damage: 3 + p*1.5, type: "bow", pierce: 3 + p, charged: true, trail: true });
-  sfx.shoot();
-  shake(5);
+  addBullet({
+    vx: 0, vy: -18, size: 5 + p, damage: 3 + p*1.5,
+    type: "bow", pierce: 3 + p, charged: true, trail: true
+  });
+  sfx.shoot(); shake(5);
 }
 function fireBubble() {
   const p = pw("bubble");
   const count = 1 + Math.floor(p/2);
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (i - (count-1)/2) * 0.4;
-    addBullet({ vx: Math.cos(a)*8, vy: Math.sin(a)*8, size: 16 + p*2, damage: 0, type: "bubble", floatTime: 120 });
+    addBullet({
+      vx: Math.cos(a)*8, vy: Math.sin(a)*8,
+      size: 16 + p*2, damage: 0, type: "bubble", floatTime: 120
+    });
   }
   sfx.shoot();
 }
@@ -3191,7 +2836,13 @@ function fireThunder() {
   const p = pw("thunder");
   const targets = enemies.slice().sort(() => Math.random() - 0.5).slice(0, 1 + p);
   for (const e of targets) {
-    lightningBolts.push({ points: [{ x: e.x + (Math.random()-.5)*40, y: 0 }, { x: e.x + (Math.random()-.5)*40, y: H/2 }, { x: e.x, y: e.y }], life: 16, color: "#ffee44" });
+    lightningBolts.push({
+      points: [
+        { x: e.x + (Math.random()-.5)*40, y: 0 },
+        { x: e.x + (Math.random()-.5)*40, y: H/2 },
+        { x: e.x, y: e.y }
+      ], life: 16, color: "#ffee44"
+    });
     const radius = 50 + p*10;
     for (let i = enemies.length-1; i >= 0; i--) {
       const en = enemies[i];
@@ -3212,7 +2863,11 @@ function fireDrone() {
   const p = pw("drone");
   const max = 2 + Math.floor(level/4) + p;
   while (turrets.length >= max) turrets.shift();
-  turrets.push({ x: player.x + (Math.random()-.5)*100, y: player.y + (Math.random()-.5)*100, life: 500 + level*20 + p*100, cool: 0, damage: 1.5 + level*.4 + p*.5, isDrone: true, angle: 0 });
+  turrets.push({
+    x: player.x + (Math.random()-.5)*100, y: player.y + (Math.random()-.5)*100,
+    life: 500 + level*20 + p*100, cool: 0,
+    damage: 1.5 + level*.4 + p*.5, isDrone: true, angle: 0
+  });
   sfx.tap();
 }
 function fireSpike() {
@@ -3230,18 +2885,20 @@ function fireSpike() {
     }
     bullets.push({ x: tx, y: ty, vx: 0, vy: 0, size: 22 + p*3, damage: 2 + p*.8, type: "spike", delay: 12, life: 40 });
   }
-  sfx.tap();
-  shake(8);
+  sfx.tap(); shake(8);
 }
 function fireSwarm() {
   const p = pw("swarm");
   const count = 5 + p*2;
   for (let i = 0; i < count; i++) {
     const baseA = -Math.PI/2 + (Math.random()-.5)*0.8;
-    addBullet({ vx: Math.cos(baseA)*(10 + Math.random()*4), vy: Math.sin(baseA)*(10 + Math.random()*4), size: 5 + p, damage: 1.5 + p*0.4, type: "missile", target: null, speed: 9 + p, hue: 45, trail: true });
+    addBullet({
+      vx: Math.cos(baseA)*(10 + Math.random()*4), vy: Math.sin(baseA)*(10 + Math.random()*4),
+      size: 5 + p, damage: 1.5 + p*0.4,
+      type: "missile", target: null, speed: 9 + p, hue: 45, trail: true
+    });
   }
-  sfx.shoot();
-  shake(5); flash("#ffcc00", 3);
+  sfx.shoot(); shake(5); flash("#ffcc00", 3);
 }
 function fireTaser() {
   const p = pw("taser");
@@ -3255,20 +2912,23 @@ function fireTaser() {
     showDamage(e.x, e.y, 5 + p*1.5, "#ffff66");
     if (e.hp <= 0) killEnemy(enemies.indexOf(e));
   }
-  sfx.shootHeavy();
-  shake(4);
+  sfx.shootHeavy(); shake(4);
 }
 function fireCrossbow() {
   const p = pw("crossbow");
-  addBullet({ vx: 0, vy: -22, size: 8 + p, damage: 3 + p*1, type: "crossbow", pierce: 3 + p, bleed: 0.5 + p*0.2, trail: true });
-  sfx.shoot();
-  shake(5);
+  addBullet({
+    vx: 0, vy: -22, size: 8 + p, damage: 3 + p*1,
+    type: "crossbow", pierce: 3 + p, bleed: 0.5 + p*0.2, trail: true
+  });
+  sfx.shoot(); shake(5);
 }
 function fireGrenade() {
   const p = pw("grenade");
-  addBullet({ vx: 0, vy: -15, size: 10 + p, damage: 2 + p*0.5, type: "grenade", gravity: 0.5, blastRadius: 80 + p*15, fuse: 60, trail: true });
-  sfx.shootHeavy();
-  shake(4);
+  addBullet({
+    vx: 0, vy: -15, size: 10 + p, damage: 2 + p*0.5,
+    type: "grenade", gravity: 0.5, blastRadius: 80 + p*15, fuse: 60, trail: true
+  });
+  sfx.shootHeavy(); shake(4);
 }
 function fireChainsaw() {
   const p = pw("chainsaw");
@@ -3299,16 +2959,24 @@ function fireDragon() {
   const count = 6 + p*2;
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (i - (count-1)/2) * 0.10 + (Math.random()-.5)*0.08;
-    addBullet({ vx: Math.cos(a)*(9 + Math.random()*4), vy: Math.sin(a)*(9 + Math.random()*4), size: 12 + Math.random()*6 + p*3, damage: 1.5 + p*0.4, type: "flame", life: 50 + p*8, hue: 15 });
+    addBullet({
+      vx: Math.cos(a)*(9 + Math.random()*4), vy: Math.sin(a)*(9 + Math.random()*4),
+      size: 12 + Math.random()*6 + p*3,
+      damage: 1.5 + p*0.4,
+      type: "flame", life: 50 + p*8, hue: 15
+    });
   }
   if (time % 3 === 0) sfx.shootHeavy();
   shake(6); flash("#ff4400", 4);
 }
 function firePhoenix() {
   const p = pw("phoenix");
-  addBullet({ vx: 0, vy: -12, size: 14 + p*3, damage: 3 + p*0.8, type: "phoenix", returning: false, hitSet: new Set(), life: 300, spin: 0, hue: 25 });
-  sfx.special();
-  shake(5); flash("#ff6600", 4);
+  addBullet({
+    vx: 0, vy: -12, size: 14 + p*3, damage: 3 + p*0.8,
+    type: "phoenix", returning: false, hitSet: new Set(),
+    life: 300, spin: 0, hue: 25
+  });
+  sfx.special(); shake(5); flash("#ff6600", 4);
 }
 function fireWarp() {
   const p = pw("warp");
@@ -3324,8 +2992,7 @@ function fireWarp() {
     target.hp -= dmg;
     showBigDamage(target.x, target.y, dmg, "#aa00ff");
     if (target.hp <= 0) killEnemy(enemies.indexOf(target));
-    sfx.dash();
-    shake(10); flash("#aa00ff", 5); chroma(10);
+    sfx.dash(); shake(10); flash("#aa00ff", 5); chroma(10);
   }
 }
 function fireMagnet() {
@@ -3347,18 +3014,27 @@ function fireMagnet() {
 }
 function fireSonic() {
   const p = pw("sonic");
-  addBullet({ vx: 0, vy: -8, size: 20 + p*5, damage: 2 + p*0.6, type: "sonic", radius: 20 + p*4, pierce: 999, life: 60, hitSet: new Set(), hue: 180 });
-  sfx.special();
-  shake(6); flash("#66ffff", 4); chroma(6);
+  addBullet({
+    vx: 0, vy: -8, size: 20 + p*5, damage: 2 + p*0.6,
+    type: "sonic", radius: 20 + p*4, pierce: 999, life: 60,
+    hitSet: new Set(), hue: 180
+  });
+  sfx.special(); shake(6); flash("#66ffff", 4); chroma(6);
 }
 function firePiano() {
   const p = pw("piano");
   const count = 3 + p;
   for (let i = 0; i < count; i++) {
-    addBullet({ x: player.x, y: player.y, vx: (Math.random()-.5)*8, vy: -8 - Math.random()*4, size: 8, damage: 2 + p*0.5, type: "piano", target: null, note: ["♪","♫","♬","♩"][Math.floor(Math.random()*4)], life: 200, trail: true, hue: 60 });
+    addBullet({
+      x: player.x, y: player.y,
+      vx: (Math.random()-.5)*8, vy: -8 - Math.random()*4,
+      size: 8, damage: 2 + p*0.5,
+      type: "piano", target: null,
+      note: ["♪","♫","♬","♩"][Math.floor(Math.random()*4)],
+      life: 200, trail: true, hue: 60
+    });
   }
-  sfx.shoot();
-  shake(2);
+  sfx.shoot(); shake(2);
 }
 function fireSnake() {
   const p = pw("snake");
@@ -3375,41 +3051,53 @@ function fireSnake() {
       snakeAngle: -Math.PI/2, snakeTimer: 0
     });
   }
-  sfx.shoot();
-  shake(2);
+  sfx.shoot(); shake(2);
 }
 function fireTornado() {
   const p = pw("tornado");
-  addBullet({ vx: 0, vy: -5, size: 25 + p*5, damage: 1.5 + p*0.5, type: "tornado", spin: 0, pullRadius: 60 + p*10, field: 300, life: 300, hue: 240 });
-  sfx.special();
-  shake(5); chroma(5);
+  addBullet({
+    vx: 0, vy: -5, size: 25 + p*5, damage: 1.5 + p*0.5,
+    type: "tornado", spin: 0, pullRadius: 60 + p*10,
+    field: 300, life: 300, hue: 240
+  });
+  sfx.special(); shake(5); chroma(5);
 }
 function fireCactus() {
   const p = pw("cactus");
   const count = 2 + Math.floor(p/2);
   for (let i = 0; i < count; i++) {
-    mines.push({ x: player.x + (Math.random()-.5)*100, y: player.y - 30 - Math.random()*50, r: 16, life: 500, damage: 2 + p*0.5, blastRadius: 60, armTimer: 0, pulse: 0, type: "cactus", shootCD: 0 });
+    mines.push({
+      x: player.x + (Math.random()-.5)*100, y: player.y - 30 - Math.random()*50,
+      r: 16, life: 500, damage: 2 + p*0.5, blastRadius: 60,
+      armTimer: 0, pulse: 0, type: "cactus", shootCD: 0
+    });
   }
-  sfx.tap();
-  shake(3);
+  sfx.tap(); shake(3);
 }
 function fireUmbrella() {
   const p = pw("umbrella");
   const count = 8 + p*2;
   for (let i = 0; i < count; i++) {
     const a = i / count * TAU;
-    addBullet({ vx: Math.cos(a)*11, vy: Math.sin(a)*11, size: 6, damage: 1.8 + p*0.5, type: "umbrella", hue: 320, trail: true });
+    addBullet({
+      vx: Math.cos(a)*11, vy: Math.sin(a)*11,
+      size: 6, damage: 1.8 + p*0.5,
+      type: "umbrella", hue: 320, trail: true
+    });
   }
   player.invincible = Math.max(player.invincible, 30);
-  sfx.special();
-  shake(8); flash("#ff88cc", 5); chroma(8);
+  sfx.special(); shake(8); flash("#ff88cc", 5); chroma(8);
 }
 function fireOraOra() {
   const p = pw("oraora");
   const count = 10 + p*4;
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (Math.random()-.5)*0.6;
-    addBullet({ vx: Math.cos(a)*22, vy: Math.sin(a)*22, size: 11 + p, damage: 2.5 + p*0.6, type: "oraora", hue: 270, trail: true, spin: Math.random()*TAU });
+    addBullet({
+      vx: Math.cos(a)*22, vy: Math.sin(a)*22,
+      size: 11 + p, damage: 2.5 + p*0.6,
+      type: "oraora", hue: 270, trail: true, spin: Math.random()*TAU
+    });
   }
   if (time % 3 === 0) sfx.shootHeavy();
   shake(10); flash("#9966ff", 6);
@@ -3418,30 +3106,38 @@ function fireMudaMuda() {
   const p = pw("mudamuda");
   mudaRushTimer = 90;
   mudaRushEnemy = enemies.slice().sort((a, b) => Math.hypot(a.x-player.x, a.y-player.y) - Math.hypot(b.x-player.x, b.y-player.y))[0];
-  sfx.shootHeavy();
-  shake(20); flash("#ffcc00", 8); chroma(10);
+  sfx.shootHeavy(); shake(20); flash("#ffcc00", 8); chroma(10);
 }
 function fireStarPlatinum() {
   const p = pw("starplatinum");
-  addBullet({ vx: 0, vy: -30, size: 10 + p, damage: 6 + p*2, type: "starplatinum", pierce: 8 + p*2, hue: 270, trail: true });
-  sfx.special();
-  shake(8); flash("#8844ff", 5);
+  addBullet({
+    vx: 0, vy: -30, size: 10 + p, damage: 6 + p*2,
+    type: "starplatinum", pierce: 8 + p*2, hue: 270, trail: true
+  });
+  sfx.special(); shake(8); flash("#8844ff", 5);
 }
 function fireCrazyDiamond() {
   const p = pw("crazydiamond");
-  addBullet({ vx: 0, vy: -14, size: 14 + p*2, damage: 4 + p*1.2, type: "crazydiamond", returning: false, hitSet: new Set(), life: 300, spin: 0, hue: 200 });
-  sfx.special();
-  shake(6); flash("#66aaff", 5);
+  addBullet({
+    vx: 0, vy: -14, size: 14 + p*2, damage: 4 + p*1.2,
+    type: "crazydiamond", returning: false, hitSet: new Set(),
+    life: 300, spin: 0, hue: 200
+  });
+  sfx.special(); shake(6); flash("#66aaff", 5);
 }
 function fireGoldExperience() {
   const p = pw("goldexperience");
   const count = 4 + p;
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (i - (count-1)/2) * 0.22;
-    addBullet({ vx: Math.cos(a)*14, vy: Math.sin(a)*14, size: 8 + p, damage: 2.5 + p*0.8, type: "goldexperience", slowDuration: 150 + p*30, hue: 50, trail: true });
+    addBullet({
+      vx: Math.cos(a)*14, vy: Math.sin(a)*14,
+      size: 8 + p, damage: 2.5 + p*0.8,
+      type: "goldexperience", slowDuration: 150 + p*30,
+      hue: 50, trail: true
+    });
   }
-  sfx.shoot();
-  shake(5); flash("#ffdd44", 5);
+  sfx.shoot(); shake(5); flash("#ffdd44", 5);
 }
 function fireKillerQueen() {
   const p = pw("killerqueen");
@@ -3451,37 +3147,42 @@ function fireKillerQueen() {
     target.bombTimer = 30;
     target.bombDamage = 30 + p*6;
     showDamage(target.x, target.y, "BOMB!", "#ff66aa");
-    sfx.shootHeavy();
-    flash("#ff66aa", 6); shake(8);
+    sfx.shootHeavy(); flash("#ff66aa", 6); shake(8);
   }
 }
 function fireMadeInHeaven() {
   const p = pw("madeinheaven");
   madeInHeavenTimer = 180;
-  sfx.special();
-  shake(10); flash("#ffffff", 8); chroma(15);
+  sfx.special(); shake(10); flash("#ffffff", 8); chroma(15);
 }
 function fireGoldenWind() {
   const p = pw("goldenwind");
   const count = 12 + p*3;
   for (let i = 0; i < count; i++) {
     const a = i / count * TAU;
-    addBullet({ vx: Math.cos(a)*12, vy: Math.sin(a)*12, size: 7 + p, damage: 3 + p*0.8, type: "goldenwind", hue: 50, trail: true });
+    addBullet({
+      vx: Math.cos(a)*12, vy: Math.sin(a)*12,
+      size: 7 + p, damage: 3 + p*0.8,
+      type: "goldenwind", hue: 50, trail: true
+    });
   }
   player.hp = Math.min(player.maxHp, player.hp + 4 + p*2);
   showDamage(player.x, player.y - 30, "+HP", "#ffcc44");
-  sfx.shootHeavy();
-  shake(8); flash("#ffcc44", 6);
+  sfx.shootHeavy(); shake(8); flash("#ffcc44", 6);
 }
 function fireFriendship() {
   const p = pw("friendship");
   const count = 3 + Math.floor(p/2);
   for (let i = 0; i < count; i++) {
     const a = -Math.PI/2 + (i - (count-1)/2) * 0.2;
-    addBullet({ vx: Math.cos(a)*16, vy: Math.sin(a)*16, size: 12 + p, damage: 6 + p*1.5, type: "friendship", pierce: 3 + p, hue: 300, trail: true, spin: 0 });
+    addBullet({
+      vx: Math.cos(a)*16, vy: Math.sin(a)*16,
+      size: 12 + p, damage: 6 + p*1.5,
+      type: "friendship", pierce: 3 + p,
+      hue: 300, trail: true, spin: 0
+    });
   }
-  sfx.shootHeavy();
-  shake(8); flash("#ff66ff", 6);
+  sfx.shootHeavy(); shake(8); flash("#ff66ff", 6);
 }
 function fireBoneBarrier() {
   const p = pw("bonebarrier");
@@ -3491,8 +3192,7 @@ function fireBoneBarrier() {
     life: 300, damage: 4 + p*1.2,
     hitSet: new Set(), vx: 0, vy: -6
   });
-  sfx.tap();
-  shake(5); flash("#ffffff", 5);
+  sfx.tap(); shake(5); flash("#ffffff", 5);
 }
 function fireGreenFireball() {
   const p = pw("greenfire");
@@ -3507,8 +3207,7 @@ function fireGreenFireball() {
       trail: true, hue: 120, spin: 0
     });
   }
-  sfx.shoot();
-  shake(6); flash("#44ff44", 5);
+  sfx.shoot(); shake(6); flash("#44ff44", 5);
 }
 function fireBlueAttack() {
   const p = pw("blueattack");
@@ -3519,8 +3218,7 @@ function fireBlueAttack() {
     life: 250, damage: 8 + p*2,
     playerMovedRecently: false
   });
-  sfx.shootHeavy();
-  shake(5); flash("#4488ff", 6);
+  sfx.shootHeavy(); shake(5); flash("#4488ff", 6);
 }
 function fireGaster() {
   const p = pw("gaster");
@@ -3536,8 +3234,7 @@ function fireGaster() {
       life: 60, damage: 15 + p*4, chargeTimer: 20, fired: false
     });
   }
-  sfx.special();
-  shake(15); flash("#ffffff", 10); chroma(20);
+  sfx.special(); shake(15); flash("#ffffff", 10); chroma(20);
 }
 function fireHeartBreak() {
   const p = pw("heartbreak");
@@ -3546,8 +3243,7 @@ function fireHeartBreak() {
     type: "heartbreak", pierce: 999,
     hue: 350, trail: true, spin: 0
   });
-  sfx.shootHeavy();
-  shake(10); flash("#ff0044", 8); chroma(10);
+  sfx.shootHeavy(); shake(10); flash("#ff0044", 8); chroma(10);
 }
 function fireDetermination() {
   const p = pw("determination");
@@ -3556,10 +3252,10 @@ function fireDetermination() {
   showDamage(player.x, player.y - 40, "DETERMINATION!", "#ff0000");
   burst(player.x, player.y, 100, "#ff0000");
   burst(player.x, player.y, 50, "#ffffff");
-  sfx.special();
-  shake(20); flash("#ff0000", 15); chroma(20);
+  sfx.special(); shake(20); flash("#ff0000", 15); chroma(20);
 }
 
+/* ============ 周回系武器 ============ */
 function updateOrbit() {
   const p = pw("orbit");
   orbitAngle += .055;
@@ -3622,7 +3318,11 @@ function deployTurret() {
   const p = pw("turret");
   const max = 1 + Math.floor(level/3) + p;
   while (turrets.length >= max) turrets.shift();
-  turrets.push({ x: player.x + (Math.random()-.5)*70, y: player.y + (Math.random()-.5)*70, life: 400 + level*15 + p*80, cool: 0, damage: 1 + level*.3 + p*.5 });
+  turrets.push({
+    x: player.x + (Math.random()-.5)*70, y: player.y + (Math.random()-.5)*70,
+    life: 400 + level*15 + p*80, cool: 0,
+    damage: 1 + level*.3 + p*.5
+  });
 }
 function updateTurrets() {
   for (let i = turrets.length-1; i >= 0; i--) {
@@ -3645,7 +3345,13 @@ function updateTurrets() {
     }
     if (target) {
       const a = Math.atan2(target.y-t.y, target.x-t.x);
-      bullets.push({ x: t.x, y: t.y, vx: Math.cos(a)*10, vy: Math.sin(a)*10, size:5, damage: t.damage, hue: t.isDrone ? 190 : 25, type:"turret", life:300 });
+      bullets.push({
+        x: t.x, y: t.y,
+        vx: Math.cos(a)*10, vy: Math.sin(a)*10,
+        size:5, damage: t.damage,
+        hue: t.isDrone ? 190 : 25,
+        type:"turret", life:300
+      });
       t.cool = t.isDrone ? 18 : 25;
     }
   }
@@ -3655,8 +3361,7 @@ function updateBlackHole(b) {
   b.field--; b.pulse++;
   for (const e of enemies) {
     if (e.type === "boss") continue;
-    const dx = b.x - e.x;
-    const dy = b.y - e.y;
+    const dx = b.x - e.x, dy = b.y - e.y;
     const d = Math.hypot(dx, dy) || 1;
     if (d < b.pullRadius) {
       const force = (1 - d / b.pullRadius) * 8 + 2;
@@ -3680,7 +3385,12 @@ function updateMines() {
       if (m.shootCD <= 0) {
         for (let k = 0; k < 6; k++) {
           const a = k / 6 * TAU + Math.random();
-          bullets.push({ x: m.x, y: m.y, vx: Math.cos(a)*7, vy: Math.sin(a)*7, size: 4, damage: m.damage*0.3, hue: 120, type: "turret", life: 150 });
+          bullets.push({
+            x: m.x, y: m.y,
+            vx: Math.cos(a)*7, vy: Math.sin(a)*7,
+            size: 4, damage: m.damage*0.3,
+            hue: 120, type: "turret", life: 150
+          });
         }
         m.shootCD = 45;
       }
@@ -3713,7 +3423,6 @@ function updateMines() {
     }
   }
 }
-
 function updateJoJoWeapons() {
   if (mudaRushTimer > 0) {
     mudaRushTimer--;
@@ -3753,7 +3462,6 @@ function updateJoJoWeapons() {
     }
   }
 }
-
 function updateUndertaleWeapons() {
   if (determinationActive > 0) {
     determinationActive--;
@@ -3816,6 +3524,7 @@ function updateUndertaleWeapons() {
   }
 }
 
+/* ============ 発射ディスパッチャ ============ */
 function fireWeapon(wkey) {
   const p = pw(wkey);
   if (wkey === "orbit" || wkey === "lightning" || wkey === "chainsaw") return;
@@ -3828,8 +3537,7 @@ function fireWeapon(wkey) {
   }
   if (wkey === "mine" || wkey === "cactus") {
     if (weaponCools[wkey] > 0) { weaponCools[wkey]--; return; }
-    if (wkey === "mine") fireMine();
-    else fireCactus();
+    if (wkey === "mine") fireMine(); else fireCactus();
     weaponCools[wkey] = Math.max(20, 100 - level*3 - p*5);
     return;
   }
@@ -3902,7 +3610,6 @@ function fireWeapon(wkey) {
   else if (wkey === "heartbreak") { fireHeartBreak(); weaponCools[wkey] = Math.max(8, (25 - Math.floor(level/2) - cdr) * speedMult); }
   else if (wkey === "determination") { fireDetermination(); weaponCools[wkey] = Math.max(60, 180 - level*3 - cdr*2); }
 }
-
 function shoot() {
   if (!selectedWeapon && activeWeapons.length === 0) return;
   for (const wkey of activeWeapons) {
@@ -3915,7 +3622,6 @@ function shoot() {
     if (time % 8 === 0) fireChainsaw();
   }
 }
-
 function damagePlayer(amount, inv) {
   if (gameOver || player.invincible > 0) return;
   if (challengeOneHit) {
@@ -3949,7 +3655,6 @@ function knockback(enemy, x, y, strength) {
   enemy.vy = dy/d * strength;
   enemy.flying = true;
 }
-
 function calcCoins(score, cleared, bossKills) {
   let coins = Math.floor(score / 10);
   coins += bossKills * 30;
@@ -3959,20 +3664,15 @@ function calcCoins(score, cleared, bossKills) {
   coins = Math.floor(coins * getCoinRateMult());
   return coins;
 }
-
+let lastEarnedCoins = 0;
 function recordGameResult(cleared) {
-  const key = studyMode ? "study" : (fusionMode && activeWeapons.length > 1
-    ? activeWeapons.join("+")
-    : selectedWeapon);
+  const key = studyMode ? "study" : (fusionMode && activeWeapons.length > 1 ? activeWeapons.join("+") : selectedWeapon);
   if (!key) return;
   const earned = calcCoins(score, cleared, bossKillCount);
   saveData.coins = (saveData.coins || 0) + earned;
   saveData.totalCoinsEarned = (saveData.totalCoinsEarned || 0) + earned;
   lastEarnedCoins = earned;
-  if (score > saveData.highScore) {
-    saveData.highScore = score;
-    highScore = score;
-  }
+  if (score > saveData.highScore) { saveData.highScore = score; highScore = score; }
   if (studyMode) {
     if (score > (saveData.studyHighScore || 0)) saveData.studyHighScore = score;
     if (cleared) saveData.studyClears = (saveData.studyClears || 0) + 1;
@@ -4006,8 +3706,8 @@ function recordGameResult(cleared) {
   updateMissionProgressFromSession();
   writeSave();
 }
-let lastEarnedCoins = 0;
 
+/* ============ プレイヤー更新 ============ */
 function updatePlayer() {
   if (player.dashTimer > 0) {
     player.x += player.dashVx;
@@ -4025,12 +3725,14 @@ function updatePlayer() {
   if (player.dashCooldown > 0) player.dashCooldown--;
   player.x = Math.max(player.hitR, Math.min(W-player.hitR, player.x));
   player.y = Math.max(player.hitR, Math.min(H-player.hitR, player.y));
+  if (time % 4 === 0 && player.dashTimer <= 0) {
+    afterImages.push({ x: player.x, y: player.y, r: player.drawR * 0.6, life: 8, maxLife: 8 });
+  }
   for (let i = afterImages.length-1; i >= 0; i--) {
     afterImages[i].life--;
     if (afterImages[i].life <= 0) afterImages.splice(i,1);
   }
-}
-
+}/* ============ 弾更新 ============ */
 function updateBullets() {
   for (let i = bullets.length-1; i >= 0; i--) {
     const b = bullets[i];
@@ -4105,7 +3807,12 @@ function updateBullets() {
     b.pulse = (b.pulse || 0) + 0.15;
     if (b.type === "oraora") b.spin = (b.spin || 0) + 0.35;
     if (b.trail && Math.random() < 0.35) {
-      particles.push({ x: b.x + (Math.random()-.5)*4, y: b.y + (Math.random()-.5)*4, vx: 0, vy: 0, life: 6, color: b.hue ? `hsl(${b.hue}, 100%, 70%)` : "#ffffff", size: 2 });
+      particles.push({
+        x: b.x + (Math.random()-.5)*4, y: b.y + (Math.random()-.5)*4,
+        vx: 0, vy: 0, life: 6,
+        color: b.hue ? `hsl(${b.hue}, 100%, 70%)` : "#ffffff",
+        size: 2
+      });
     }
     if (b.type === "greenfire") {
       b.fuse--;
@@ -4151,8 +3858,7 @@ function updateBullets() {
         const dx = b.x - e.x, dy = b.y - e.y;
         const d = Math.hypot(dx, dy) || 1;
         if (d < b.pullRadius) {
-          e.x += dx/d * 3;
-          e.y += dy/d * 3;
+          e.x += dx/d * 3; e.y += dy/d * 3;
           e.hp -= b.damage;
         }
       }
@@ -4272,7 +3978,12 @@ function updateBullets() {
         const n = b.childCount || 6;
         for (let k = 0; k < n; k++) {
           const a = k / n * TAU;
-          bullets.push({ x: b.x, y: b.y, vx: Math.cos(a)*8, vy: Math.sin(a)*8, size: 5, damage: 1.5, type: "cluster-child", life: 200, trail: true });
+          bullets.push({
+            x: b.x, y: b.y,
+            vx: Math.cos(a)*8, vy: Math.sin(a)*8,
+            size: 5, damage: 1.5, type: "cluster-child",
+            life: 200, trail: true
+          });
         }
         burst(b.x, b.y, 40, "#ccff33");
         burst(b.x, b.y, 20, "#ffffff");
@@ -4321,6 +4032,7 @@ function updateBullets() {
   }
 }
 
+/* ============ 敵更新 ============ */
 function updateEnemies() {
   const isTimeStopped = theWorldTimer > 0 || studyQuizActive || pauseScreen;
   for (let i = enemies.length-1; i >= 0; i--) {
@@ -4356,7 +4068,23 @@ function updateEnemies() {
         e.vx *= .94; e.vy *= .94;
         if (Math.hypot(e.vx, e.vy) < 1) e.flying = false;
       } else {
-        if (e.type === "dasher") {
+        if (e.type === "orbiter") {
+          e.orbitPhase += 0.05;
+          e.y += e.speed * 0.4 * slow;
+          e.x += Math.sin(e.orbitPhase) * 2;
+        } else if (e.type === "shield") {
+          e.y += e.speed * slow;
+        } else if (e.type === "bomber") {
+          e.y += e.speed * slow;
+          if (e.y > e.targetY) {
+            burst(e.x, e.y, 80, "#ff6600");
+            shockwaves.push({ x:e.x, y:e.y, radius:10, maxRadius:150, life:25, color:"255,102,0" });
+            shake(30); flash("#ff6600", 8);
+            if (Math.hypot(player.x-e.x, player.y-e.y) < 100) damagePlayer(12, 55);
+            killEnemy(i);
+            continue;
+          }
+        } else if (e.type === "dasher") {
           e.dashTimer--;
           if (e.dashing) {
             e.x += e.dashVx; e.y += e.dashVy;
@@ -4419,20 +4147,30 @@ function updateEnemies() {
       shake(2);
       for (let k = 0; k < 8 * FX.particleMultiplier; k++) {
         const a = Math.random()*TAU, sp = 3 + Math.random()*5;
-        particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 10 + Math.random()*6, color: k % 3 === 0 ? "#ffff00" : (k % 3 === 1 ? "#ffffff" : (b.hue ? `hsl(${b.hue}, 100%, 70%)` : "#ff00ff")), size: 2 + Math.random()*2 });
+        particles.push({
+          x: b.x, y: b.y,
+          vx: Math.cos(a)*sp, vy: Math.sin(a)*sp,
+          life: 10 + Math.random()*6,
+          color: k % 3 === 0 ? "#ffff00" : (k % 3 === 1 ? "#ffffff" : (b.hue ? `hsl(${b.hue}, 100%, 70%)` : "#ff00ff")),
+          size: 2 + Math.random()*2
+        });
       }
-      if (Math.random() < 0.25) shockwaves.push({ x:b.x, y:b.y, radius:5, maxRadius:22, life:8, color:"255,255,255" });
+      shockwaves.push({ x:b.x, y:b.y, radius:5, maxRadius:28, life:10, color:"255,255,255" });
+      if (e.shielded) {
+        e.shieldHp -= dmg;
+        if (e.shieldHp <= 0) {
+          e.shielded = false;
+          burst(e.x, e.y, 30, "#88ff88");
+          showDamage(e.x, e.y, "SHIELD BREAK!", "#88ff88");
+          shake(15); flash("#88ff88", 5);
+        }
+        const idx2 = bullets.indexOf(b);
+        if (idx2 >= 0) bullets.splice(idx2, 1);
+        continue;
+      }
       if (b.type === "boomerang") { b.hitSet.add(e); e.hp -= dmg; showDamage(e.x, e.y, dmg, "#7cff6b"); }
-      else if (b.type === "phoenix") {
-        if (!b.hitSet) b.hitSet = new Set();
-        b.hitSet.add(e); e.hp -= dmg;
-        showDamage(e.x, e.y, dmg, "#ff6600");
-      }
-      else if (b.type === "crazydiamond") {
-        if (!b.hitSet) b.hitSet = new Set();
-        b.hitSet.add(e); e.hp -= dmg;
-        showDamage(e.x, e.y, dmg, "#66aaff");
-      }
+      else if (b.type === "phoenix") { if (!b.hitSet) b.hitSet = new Set(); b.hitSet.add(e); e.hp -= dmg; showDamage(e.x, e.y, dmg, "#ff6600"); }
+      else if (b.type === "crazydiamond") { if (!b.hitSet) b.hitSet = new Set(); b.hitSet.add(e); e.hp -= dmg; showDamage(e.x, e.y, dmg, "#66aaff"); }
       else if (b.type === "oraora") { e.hp -= dmg; showDamage(e.x, e.y, dmg, "#9966ff"); consumed = true; }
       else if (b.type === "starplatinum") { e.hp -= dmg; showBigDamage(e.x, e.y, dmg, "#8844ff"); b.pierce--; if (b.pierce <= 0) consumed = true; }
       else if (b.type === "friendship") { e.hp -= dmg; showBigDamage(e.x, e.y, dmg, "#ff66ff"); b.pierce--; if (b.pierce <= 0) consumed = true; }
@@ -4452,14 +4190,29 @@ function updateEnemies() {
         shake(12);
         if (b.pierce <= 0) consumed = true;
       }
-      else if (b.type === "freeze" || b.type === "iceshard") { e.hp -= dmg; e.slowTimer = (b.slowDuration || 90 + level*5); e.slowFactor = Math.max(.12, .42 - level*.02); showDamage(e.x, e.y, dmg, "#a3e8ff"); if (b.type === "freeze") consumed = true; }
+      else if (b.type === "freeze" || b.type === "iceshard") {
+        e.hp -= dmg;
+        e.slowTimer = (b.slowDuration || 90 + level*5);
+        e.slowFactor = Math.max(.12, .42 - level*.02);
+        showDamage(e.x, e.y, dmg, "#a3e8ff");
+        if (b.type === "freeze") consumed = true;
+      }
       else if (b.type === "poison") { e.hp -= dmg; e.poisonTime = b.poisonTime; e.poisonDPS = b.poisonDPS; showDamage(e.x, e.y, dmg, "#88ff44"); consumed = true; }
       else if (b.type === "crossbow") { e.hp -= dmg; e.bleedTimer = 120; e.bleedDPS = b.bleed || 0.5; showDamage(e.x, e.y, dmg, "#aa6622"); b.pierce--; if (b.pierce <= 0) consumed = true; }
       else if (b.type === "bubble") { e.floatTime = b.floatTime; showDamage(e.x, e.y, "BUBBLE!", "#aaddff"); consumed = true; }
       else if (b.type === "railgun") { if (!b.hitSet) b.hitSet = new Set(); b.hitSet.add(e); e.hp -= dmg; showBigDamage(e.x, e.y, dmg, "#00eeff"); shake(12); flash("#00eeff", 3); chroma(6); hitStopAdd(2); }
       else if (b.type === "vampire") { e.hp -= dmg; showDamage(e.x, e.y, dmg, "#cc0066"); vampireHeal += dmg * (b.stealRatio || 0.3); consumed = true; }
-      else if (b.type === "laser" || b.type === "bow") { e.hp -= dmg; showDamage(e.x, e.y, dmg, b.type === "laser" ? "#ff00ff" : "#c8a06a"); if (b.type === "bow") { b.pierce--; if (b.pierce <= 0) consumed = true; } }
-      else { e.hp -= dmg; showDamage(e.x, e.y, dmg, "#ffffff"); if (b.pierce) { b.pierce--; if (b.pierce <= 0) consumed = true; } else consumed = true; }
+      else if (b.type === "laser" || b.type === "bow") {
+        e.hp -= dmg;
+        showDamage(e.x, e.y, dmg, b.type === "laser" ? "#ff00ff" : "#c8a06a");
+        if (b.type === "bow") { b.pierce--; if (b.pierce <= 0) consumed = true; }
+      }
+      else {
+        e.hp -= dmg;
+        showDamage(e.x, e.y, dmg, "#ffffff");
+        if (b.pierce) { b.pierce--; if (b.pierce <= 0) consumed = true; }
+        else consumed = true;
+      }
       if (consumed) {
         const idx2 = bullets.indexOf(b);
         if (idx2 >= 0) bullets.splice(idx2, 1);
@@ -4469,49 +4222,50 @@ function updateEnemies() {
     if (killed) continue;
     if (!enemies[i]) continue;
     if (e.y > H+60 && e.type !== "boss") { escapeEnemy(i); continue; }
-    if (!isTimeStopped && Math.random() < e.shootRate) fireEnemyBullet(e);
+    if (!isTimeStopped && Math.random() < e.shootRate * 0.5) fireEnemyBullet(e);
   }
 }
 
+/* ============ 敵弾生成 ============ */
 function fireEnemyBullet(e) {
   const baseAngle = Math.atan2(player.y - e.y, player.x - e.x);
   const speedBase = (2 + difficulty * 0.5) * enemyBulletSpeedScale();
+  const HALF = 0.5;
   if (e.type === "boss") {
     const pattern = Math.floor(e.bossPhase * 3) % 3;
     if (pattern === 0) {
-      for (let k = 0; k < 6; k++) {
-        const a = baseAngle + (k - 2.5) * 0.22;
+      const n = Math.max(2, Math.round(6 * HALF));
+      for (let k = 0; k < n; k++) {
+        const a = baseAngle + (k - (n-1)/2) * 0.22;
         const s = (3.2 + difficulty * 0.3) * enemyBulletSpeedScale();
         enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 6, hue: 0 });
       }
     } else if (pattern === 1) {
       const offset = time * 0.1;
-      for (let k = 0; k < 8; k++) {
-        const a = k / 8 * TAU + offset;
+      const n = Math.max(3, Math.round(8 * HALF));
+      for (let k = 0; k < n; k++) {
+        const a = k / n * TAU + offset;
         const s = (2.8 + difficulty * 0.3) * enemyBulletSpeedScale();
         enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 5, hue: 300 });
       }
     } else {
-      for (let layer = 0; layer < 2; layer++) {
-        const a = baseAngle + layer * 0.4 - 0.2;
-        const s = (3.5 + difficulty * 0.4 + layer * 0.4) * enemyBulletSpeedScale();
-        enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 7, hue: 30 });
-      }
+      const a = baseAngle;
+      const s = (3.5 + difficulty * 0.4) * enemyBulletSpeedScale();
+      enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 7, hue: 30 });
     }
     return;
   }
   if (e.type === "heavy") {
-    for (let k = 0; k < 2; k++) {
-      const a = baseAngle + (k - 0.5) * 0.24;
-      const s = (2.8 + difficulty * 0.3) * enemyBulletSpeedScale();
-      enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 6, hue: 30 });
-    }
+    const a = baseAngle;
+    const s = (2.8 + difficulty * 0.3) * enemyBulletSpeedScale();
+    enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 6, hue: 30 });
     return;
   }
   if (e.type === "tank") {
     const offset = time * 0.03;
-    for (let k = 0; k < 4; k++) {
-      const a = k / 4 * TAU + offset;
+    const n = 2;
+    for (let k = 0; k < n; k++) {
+      const a = k / n * TAU + offset;
       const s = (2.0 + difficulty * 0.25) * enemyBulletSpeedScale();
       enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 7, hue: 270 });
     }
@@ -4519,14 +4273,15 @@ function fireEnemyBullet(e) {
   }
   if (e.type === "shooter") {
     e.burstCooldown = (e.burstCooldown || 0) + 1;
-    if (e.burstCooldown % 7 === 0) {
+    if (e.burstCooldown % 12 === 0) {
       const offset = time * 0.05;
-      for (let k = 0; k < 6; k++) {
-        const a = k / 6 * TAU + offset;
+      const n = 3;
+      for (let k = 0; k < n; k++) {
+        const a = k / n * TAU + offset;
         const s = (2.2 + difficulty * 0.3) * enemyBulletSpeedScale();
         enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 5, hue: 200 });
       }
-    } else if (e.burstCooldown % 3 === 0) {
+    } else if (e.burstCooldown % 6 === 0) {
       const a = baseAngle;
       const s = (3.2 + difficulty * 0.4) * enemyBulletSpeedScale();
       enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 5, hue: 200 });
@@ -4535,11 +4290,23 @@ function fireEnemyBullet(e) {
   }
   if (e.type === "splitter") {
     const offset = Math.random() * TAU;
-    for (let k = 0; k < 3; k++) {
-      const a = k / 3 * TAU + offset;
+    const n = 2;
+    for (let k = 0; k < n; k++) {
+      const a = k / n * TAU + offset;
       const s = (2.3 + difficulty * 0.25) * enemyBulletSpeedScale();
       enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 5, hue: 330 });
     }
+    return;
+  }
+  if (e.type === "orbiter") {
+    const offset = e.orbitPhase;
+    enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(offset)*3, vy: Math.sin(offset)*3, r: 5, hue: 160 });
+    return;
+  }
+  if (e.type === "shield") {
+    const a = baseAngle;
+    const s = (2.6 + difficulty * 0.3) * enemyBulletSpeedScale();
+    enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 6, hue: 100 });
     return;
   }
   const a = baseAngle;
@@ -4547,6 +4314,7 @@ function fireEnemyBullet(e) {
   enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 4, hue: 30 });
 }
 
+/* ============ 敵弾更新 ============ */
 function updateEnemyBullets() {
   const isTimeStopped = theWorldTimer > 0 || studyQuizActive || pauseScreen;
   if (isTimeStopped) return;
@@ -4562,6 +4330,7 @@ function updateEnemyBullets() {
   }
 }
 
+/* ============ アイテム ============ */
 function updatePowerups() {
   for (let i = powerups.length-1; i >= 0; i--) {
     const p = powerups[i];
@@ -4575,6 +4344,7 @@ function updatePowerups() {
   }
 }
 
+/* ============ エフェクト更新 ============ */
 function updateEffects() {
   for (let i = particles.length-1; i >= 0; i--) {
     const p = particles[i];
@@ -4604,15 +4374,14 @@ function updateEffects() {
   if (zoomPulse < 1.005) zoomPulse = 1;
 }
 
+/* ============ update メイン ============ */
 function update() {
   updateStars();
   updateSpecial();
   updateSpecials();
   updateJoJoWeapons();
   updateUndertaleWeapons();
-
   if (pauseScreen || settingsScreen) return;
-
   if (studyMode && !titleScreen && !weaponMenu && !specialMenu && !shopScreen && !gameOver && !missionScreen && !challengeScreen && !studySelectScreen) {
     if (studyQuizActive) {
       studyQuizTimeLeft--;
@@ -4628,7 +4397,6 @@ function update() {
       if (studyTimer <= 0) startStudyQuiz();
     }
   }
-
   const constantWobble = FX.constantShake + (bossActive ? 0.8 : 0) + (combo > 20 ? 0.4 : 0);
   shakeX = (Math.random()-.5) * (screenShake * 2 + constantWobble);
   shakeY = (Math.random()-.5) * (screenShake * 2 + constantWobble);
@@ -4640,7 +4408,6 @@ function update() {
   if (titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen) return;
   if (specialActive > 0) return;
   if (studyQuizActive) return;
-
   time++;
   rainbowHue = (rainbowHue + 3) % 360;
   difficulty = Math.min(3, 1 + time / 1500);
@@ -4669,7 +4436,6 @@ function update() {
     vampireHeal -= heal;
   }
   updatePlayer();
-
   const weaponCount = Math.max(1, activeWeapons.length);
   const weaponMultiplier = 1 + (weaponCount - 1) * 0.6;
   const levelSpawnBonus = Math.min(0.30, (level - 1) * 0.008);
@@ -4683,7 +4449,6 @@ function update() {
   let minEnemies = Math.min(60, 8 + Math.floor(level * 1.2 * weaponMultiplier));
   if (challengeEnemyRush) minEnemies *= 2;
   if (enemies.length < minEnemies && Math.random() < 0.15) spawnEnemy();
-
   shoot();
   updateTurrets();
   updateMines();
@@ -4692,11 +4457,8 @@ function update() {
   updateEnemyBullets();
   updatePowerups();
   updateEffects();
-
   if (score > highScore) highScore = score;
-}
-
-/* ===== 描画 ===== */
+}/* ============ プレイヤー描画 ============ */
 function drawPlayer() {
   if (determinationActive > 0) {
     ctx.save();
@@ -4769,6 +4531,7 @@ function drawPlayer() {
   ctx.stroke();
   ctx.restore();
 }
+
 function drawKnifeAim() {
   if (selectedWeapon !== "knife" && selectedWeapon !== "sword") return;
   const a = selectedWeapon === "sword" ? swordAngle : knifeAngle;
@@ -4810,12 +4573,10 @@ function drawFist(x, y, angle, col, outlineCol, scale) {
   ctx.arc(-2, -5, 3.2, 0, TAU);
   ctx.arc(2, -5, 3.2, 0, TAU);
   ctx.arc(6, -3, 3, 0, TAU);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fill(); ctx.stroke();
   ctx.beginPath();
   ctx.ellipse(7, 4, 4, 3, -0.4, 0, TAU);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fill(); ctx.stroke();
   ctx.fillStyle = "rgba(0,0,0,.2)";
   ctx.beginPath();
   ctx.ellipse(-2, 3, 8, 3, 0, 0, TAU);
@@ -4823,6 +4584,7 @@ function drawFist(x, y, angle, col, outlineCol, scale) {
   ctx.restore();
 }
 
+/* ============ 弾描画 ============ */
 function drawBullet(b) {
   if (b.type === "piano") {
     ctx.save();
@@ -5066,6 +4828,8 @@ function drawBullet(b) {
   }
   ctx.restore();
 }
+
+/* ============ 敵描画 ============ */
 function drawEnemies() {
   for (const e of enemies) {
     let c = "#ff0088";
@@ -5075,6 +4839,9 @@ function drawEnemies() {
     else if (e.type === "tank") c = "#8866ff";
     else if (e.type === "dasher") c = "#ff6600";
     else if (e.type === "shooter") c = "#00ddff";
+    else if (e.type === "orbiter") c = "#00ffaa";
+    else if (e.type === "shield") c = "#88ff88";
+    else if (e.type === "bomber") c = "#ff6600";
     if (e.isBomb) c = "#ff66aa";
     if (e.type === "boss") {
       const grad = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3);
@@ -5105,10 +4872,26 @@ function drawEnemies() {
       ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 4, 0, TAU); ctx.stroke();
     }
+    if (e.type === "orbiter") {
+      ctx.strokeStyle = "#00ffaa"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 6, 0, TAU); ctx.stroke();
+    }
+    if (e.type === "shield" && e.shielded) {
+      ctx.strokeStyle = "#88ff88"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 6, 0, TAU); ctx.stroke();
+    }
+    if (e.type === "bomber") {
+      ctx.strokeStyle = "#ff6600"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 4 + Math.sin(time*0.3)*2, 0, TAU); ctx.stroke();
+    }
     if (e.type === "boss") {
       ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 6, 0, TAU); ctx.stroke();
       ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 14, 0, TAU); ctx.stroke();
+      if (e.phase2) {
+        ctx.strokeStyle = "#ffcc00"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 22, 0, TAU); ctx.stroke();
+      }
     }
     if (e.slowTimer > 0) {
       ctx.strokeStyle = "#a3e8ff"; ctx.lineWidth = 3;
@@ -5145,6 +4928,7 @@ function drawEnemies() {
     }
   }
 }
+
 function drawTurrets() {
   for (const t of turrets) {
     ctx.save();
@@ -5166,6 +4950,7 @@ function drawTurrets() {
     ctx.restore();
   }
 }
+
 function drawMines() {
   for (const m of mines) {
     ctx.save();
@@ -5180,6 +4965,7 @@ function drawMines() {
     ctx.restore();
   }
 }
+
 function drawOrbit() {
   if (selectedWeapon !== "orbit" && !activeWeapons.includes("orbit")) return;
   const p = pw("orbit");
@@ -5198,6 +4984,7 @@ function drawOrbit() {
     ctx.restore();
   }
 }
+
 function drawLightning() {
   for (const bolt of lightningBolts) {
     ctx.save();
@@ -5218,6 +5005,7 @@ function drawLightning() {
     ctx.restore();
   }
 }
+
 function drawEffects() {
   for (const bb of boneBarriers) {
     ctx.save();
@@ -5269,6 +5057,7 @@ function drawEffects() {
     ctx.restore();
   }
 }
+
 function drawPowerups() {
   for (const p of powerups) {
     const bobY = p.y + Math.sin(p.bob)*4;
@@ -5286,6 +5075,7 @@ function drawPowerups() {
     ctx.restore();
   }
 }
+
 function drawDamageNumbers() {
   ctx.save();
   ctx.textAlign = "center";
@@ -5300,6 +5090,7 @@ function drawDamageNumbers() {
   ctx.restore();
   ctx.textAlign = "left";
 }
+
 function drawSpecialEffect() {
   if (specialActive <= 0) return;
   const progress = 1 - specialActive / 90;
@@ -5323,13 +5114,13 @@ function drawSpecialEffect() {
   ctx.textAlign = "left";
   ctx.restore();
 }
+
 function drawSpecialOverlays() {
   if (kingCrimsonTimer > 0) {
     const alpha = Math.min(1, kingCrimsonTimer / 60);
     ctx.save();
     ctx.globalAlpha = alpha * 0.4;
-    ctx.fillStyle = "#cc0044";
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#cc0044"; ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = alpha;
     ctx.textAlign = "center";
     ctx.shadowBlur = 40; ctx.shadowColor = "#cc0044";
@@ -5343,8 +5134,7 @@ function drawSpecialOverlays() {
     const alpha = Math.min(1, gerTimer / 60);
     ctx.save();
     ctx.globalAlpha = alpha * 0.35;
-    ctx.fillStyle = "#ffdd00";
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#ffdd00"; ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = alpha;
     ctx.textAlign = "center";
     ctx.shadowBlur = 40; ctx.shadowColor = "#ffdd00";
@@ -5359,8 +5149,7 @@ function drawSpecialOverlays() {
     const alpha = Math.min(1, whiteSnakeTimer / 60);
     ctx.save();
     ctx.globalAlpha = alpha * 0.3;
-    ctx.fillStyle = "#aaddff";
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#aaddff"; ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = alpha;
     ctx.textAlign = "center";
     ctx.shadowBlur = 40; ctx.shadowColor = "#aaddff";
@@ -5383,6 +5172,7 @@ function drawSpecialOverlays() {
     ctx.restore();
   }
 }
+
 function drawTheWorldEffect() {
   if (theWorldTimer <= 0) return;
   const alpha = Math.min(1, theWorldTimer / 30);
@@ -5403,6 +5193,7 @@ function drawTheWorldEffect() {
   ctx.textAlign = "left";
   ctx.restore();
 }
+
 function drawMudaMudaEffect() {
   if (mudaRushTimer <= 0) return;
   ctx.save();
@@ -5417,25 +5208,19 @@ function drawMudaMudaEffect() {
   ctx.fillText(text, W/2 - shake2, H/2 + 200);
   ctx.textAlign = "left";
   ctx.restore();
-}
-
+}/* ============ スタディクイズ ============ */
 function drawStudyQuiz() {
   if (!studyQuizActive || !studyQuiz) return;
   ctx.save();
   ctx.fillStyle = "rgba(0, 10, 30, .82)";
   ctx.fillRect(0, 0, W, H);
-
   ctx.textAlign = "center";
-  ctx.shadowBlur = 30;
-  ctx.shadowColor = "#66ccff";
+  ctx.shadowBlur = 30; ctx.shadowColor = "#66ccff";
   ctx.fillStyle = "#66ccff";
   ctx.font = "bold 22px Arial";
   ctx.fillText("⏸ TIME STOP", W/2, 80);
-
   const timeRatio = studyQuizTimeLeft / studyQuizTimeMax;
-  const barW = W - 100;
-  const barX = 50;
-  const barY = 105;
+  const barW = W - 100, barX = 50, barY = 105;
   ctx.fillStyle = "rgba(50,50,50,.6)";
   ctx.fillRect(barX, barY, barW, 10);
   ctx.fillStyle = timeRatio > 0.4 ? "#66ccff" : "#ff6666";
@@ -5443,13 +5228,10 @@ function drawStudyQuiz() {
   ctx.shadowColor = ctx.fillStyle;
   ctx.fillRect(barX, barY, barW * timeRatio, 10);
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = "#fff";
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1;
   ctx.strokeRect(barX, barY, barW, 10);
-
   ctx.textAlign = "center";
-  ctx.shadowBlur = 25;
-  ctx.shadowColor = "#ffffff";
+  ctx.shadowBlur = 25; ctx.shadowColor = "#ffffff";
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 30px Arial";
   const lines = studyQuiz.text.split("\n");
@@ -5457,21 +5239,14 @@ function drawStudyQuiz() {
   for (let i = 0; i < lines.length; i++) {
     ctx.fillText(lines[i], W/2, baseY + i * 40);
   }
-
-  const btnW = (W - 80) / 2;
-  const btnH = 70;
-  const gap = 12;
-  const baseBtnX = 40;
-  const baseBtnY = H - 260;
+  const btnW = (W - 80) / 2, btnH = 70, gap = 12;
+  const baseBtnX = 40, baseBtnY = H - 260;
   for (let i = 0; i < 4; i++) {
-    const col = i % 2;
-    const row = Math.floor(i / 2);
+    const col = i % 2, row = Math.floor(i / 2);
     const bx = baseBtnX + col * (btnW + gap);
     const by = baseBtnY + row * (btnH + gap);
-    ctx.shadowBlur = 25;
-    ctx.shadowColor = "#66ccff";
-    ctx.strokeStyle = "#66ccff";
-    ctx.lineWidth = 3;
+    ctx.shadowBlur = 25; ctx.shadowColor = "#66ccff";
+    ctx.strokeStyle = "#66ccff"; ctx.lineWidth = 3;
     ctx.strokeRect(bx, by, btnW, btnH);
     ctx.fillStyle = "rgba(102, 204, 255, .15)";
     ctx.fillRect(bx, by, btnW, btnH);
@@ -5480,13 +5255,11 @@ function drawStudyQuiz() {
     ctx.textAlign = "left";
     ctx.fillText(`[${i+1}]`, bx + 8, by + 18);
     ctx.textAlign = "center";
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = "#ffffff";
+    ctx.shadowBlur = 15; ctx.shadowColor = "#ffffff";
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 34px Arial";
     ctx.fillText(String(studyQuiz.choices[i]), bx + btnW/2, by + btnH/2 + 14);
   }
-
   ctx.textAlign = "center";
   ctx.shadowBlur = 0;
   ctx.fillStyle = "rgba(255,255,255,.7)";
@@ -5495,11 +5268,11 @@ function drawStudyQuiz() {
   ctx.fillStyle = "rgba(255,255,255,.5)";
   ctx.font = "11px Arial";
   ctx.fillText(`正解数: ${studyCorrectCount}`, W/2, H - 20);
-
   ctx.restore();
   ctx.textAlign = "left";
 }
 
+/* ============ スタディ学年選択 ============ */
 function drawStudySelectScreen() {
   ctx.fillStyle = "rgba(0,0,8,.95)";
   ctx.fillRect(0, 0, W, H);
@@ -5508,16 +5281,12 @@ function drawStudySelectScreen() {
   ctx.fillStyle = "#66ccff";
   ctx.font = "bold 34px Arial";
   ctx.fillText("📚 スタディモード", W/2, 90);
-
   ctx.shadowBlur = 15; ctx.shadowColor = "#ffffff";
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 16px Arial";
   ctx.fillText("学年を選んでください", W/2, 140);
-
   const btnY1 = 200, btnY2 = 270, btnY3 = 340;
-  const btnW = 280, btnH = 55;
-  const btnX = (W - btnW) / 2;
-
+  const btnW = 280, btnH = 55, btnX = (W - btnW) / 2;
   const drawGradeBtn = (y, label, color, sub) => {
     ctx.shadowBlur = 25; ctx.shadowColor = color;
     ctx.strokeStyle = color; ctx.lineWidth = 3;
@@ -5535,11 +5304,9 @@ function drawStudySelectScreen() {
       ctx.fillText(sub, btnX + btnW/2, y + 44);
     }
   };
-
   drawGradeBtn(btnY1, "中学1年", "#88ff88", "正負の数・一次方程式・文字式");
   drawGradeBtn(btnY2, "中学2年", "#ffcc44", "連立方程式・式変形・一次関数");
   drawGradeBtn(btnY3, "中学3年", "#ff88cc", "展開・因数分解・二次方程式");
-
   ctx.shadowBlur = 0;
   ctx.fillStyle = "rgba(255,255,255,.7)";
   ctx.font = "bold 12px Arial";
@@ -5547,10 +5314,7 @@ function drawStudySelectScreen() {
   ctx.fillText("※ ボス1体撃破でクリア", W/2, 452);
   ctx.fillText("※ 正解で即レベルアップ", W/2, 474);
   ctx.fillText("※ 報酬2倍", W/2, 496);
-
-  const backBtnY = H - 45;
-  const backBtnW = 200;
-  const backBtnX = (W - backBtnW) / 2;
+  const backBtnY = H - 45, backBtnW = 200, backBtnX = (W - backBtnW) / 2;
   ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc";
   ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
   ctx.strokeRect(backBtnX, backBtnY - 22, backBtnW, 44);
@@ -5563,6 +5327,7 @@ function drawStudySelectScreen() {
   ctx.textAlign = "left";
 }
 
+/* ============ タイトル ============ */
 function drawTitle() {
   ctx.fillStyle = "rgba(0,0,8,.85)";
   ctx.fillRect(0, 0, W, H);
@@ -5572,12 +5337,10 @@ function drawTitle() {
   ctx.font = "bold 42px Arial";
   ctx.fillText("NEON BULLET", W/2, 80);
   ctx.fillText("SURVIVAL", W/2, 125);
-
   ctx.fillStyle = "#ffcc00";
   ctx.font = "bold 14px Arial";
   ctx.shadowBlur = 15; ctx.shadowColor = "#ffcc00";
   ctx.fillText(`${WEAPON_ORDER.length} WEAPONS  •  ${SPECIAL_ORDER.length - 1} SPECIALS`, W/2, 152);
-
   const totalWeapons = WEAPON_ORDER.length;
   let clearedWeapons = 0;
   let ownedCount = saveData.ownedWeapons.length;
@@ -5593,24 +5356,19 @@ function drawTitle() {
   ctx.font = "bold 10px Arial";
   ctx.shadowBlur = 8; ctx.shadowColor = "#88ff88";
   ctx.fillText(`武器: ${ownedCount}/${totalWeapons}  必殺: ${ownedSpecials}/${SPECIAL_ORDER.length - 1}  クリア: ${clearedWeapons}  HS: ${saveData.highScore}`, W/2, 194);
-
   ctx.fillStyle = "#fff";
   ctx.font = "bold 12px Arial";
   ctx.shadowBlur = 0;
   ctx.fillText("演出モード", W/2, 216);
-
   const modes = [
     { key: "chaos",  label: "CHAOS",  desc: "フル狂気",       color: "#ff00ff" },
     { key: "normal", label: "NORMAL", desc: "標準",           color: "#00ffcc" },
     { key: "safe",   label: "SAFE",   desc: "光/揺れ控えめ", color: "#88ff88" }
   ];
-
   for (let i = 0; i < modes.length; i++) {
     const m = modes[i];
-    const x = TITLE_MODE_XS[i];
-    const y = TITLE_MODES_Y;
-    const w = TITLE_MODE_W;
-    const h = TITLE_MODE_H;
+    const x = TITLE_MODE_XS[i], y = TITLE_MODES_Y;
+    const w = TITLE_MODE_W, h = TITLE_MODE_H;
     const selected = fxMode === m.key;
     ctx.shadowBlur = selected ? 25 : 10;
     ctx.shadowColor = m.color;
@@ -5628,10 +5386,8 @@ function drawTitle() {
     ctx.font = "10px Arial";
     ctx.fillText(m.desc, x + w/2, y + 38);
   }
-
   {
-    const y = TITLE_PLAY_Y;
-    const btnW = TITLE_PLAY_W, btnH = TITLE_PLAY_H;
+    const y = TITLE_PLAY_Y, btnW = TITLE_PLAY_W, btnH = TITLE_PLAY_H;
     const x = (W - btnW) / 2;
     ctx.shadowBlur = 25; ctx.shadowColor = "#00ffcc";
     ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
@@ -5641,10 +5397,8 @@ function drawTitle() {
     ctx.fillStyle = "#00ffcc"; ctx.font = "bold 18px Arial";
     ctx.fillText("▶  PLAY", W/2, y + 30);
   }
-
   {
-    const y = TITLE_FUSION_Y;
-    const btnW = TITLE_FUSION_W, btnH = TITLE_FUSION_H;
+    const y = TITLE_FUSION_Y, btnW = TITLE_FUSION_W, btnH = TITLE_FUSION_H;
     const x = (W - btnW) / 2;
     const hue = (Date.now() * 0.15) % 360;
     ctx.shadowBlur = 25;
@@ -5656,10 +5410,8 @@ function drawTitle() {
     ctx.fillStyle = `hsl(${hue}, 100%, 70%)`; ctx.font = "bold 16px Arial";
     ctx.fillText("⚡ FUSION MODE ⚡", W/2, y + 29);
   }
-
   {
-    const y = TITLE_QUICK_Y;
-    const btnW = TITLE_QUICK_W, btnH = TITLE_QUICK_H;
+    const y = TITLE_QUICK_Y, btnW = TITLE_QUICK_W, btnH = TITLE_QUICK_H;
     const x = (W - btnW) / 2;
     ctx.shadowBlur = 25; ctx.shadowColor = "#ffcc00";
     ctx.strokeStyle = "#ffcc00"; ctx.lineWidth = 3;
@@ -5672,7 +5424,6 @@ function drawTitle() {
     ctx.font = "10px Arial";
     ctx.fillText("WAVE 2 でボス出現", W/2, y + 38);
   }
-
   const drawGridBtn = (x, y, w, h, color, label, sub, badge) => {
     ctx.shadowBlur = 25; ctx.shadowColor = color;
     ctx.strokeStyle = color; ctx.lineWidth = 3;
@@ -5696,7 +5447,6 @@ function drawTitle() {
       ctx.fillText("!", x + w - 12, y + 16);
     }
   };
-
   drawGridBtn(TITLE_GRID_X1, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H, "#ffd700", `🛒 SHOP`, `🪙${saveData.coins}`);
   const missionBadge = dailyMissions.some(m => !m.claimed && isMissionComplete(m));
   drawGridBtn(TITLE_GRID_X2, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H, "#88ff88", `📅 ミッション`, `毎日更新`, missionBadge);
@@ -5704,7 +5454,22 @@ function drawTitle() {
   drawGridBtn(TITLE_GRID_X1, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H, "#ff6600", `🔥 縛り`, `${challengeClearedCount}/${CHALLENGE_ORDER.length}`, false);
   const gradeLabel = saveData.studyGrade === 1 ? "中1" : (saveData.studyGrade === 2 ? "中2" : "中3");
   drawGridBtn(TITLE_GRID_X2, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H, "#66ccff", `📚 スタディ`, `現在: ${gradeLabel}`, false);
-
+  {
+    const y = TITLE_GACHA_Y;
+    const btnW = TITLE_GACHA_W, btnH = TITLE_GACHA_H;
+    const x = (W - btnW) / 2;
+    const hue = (Date.now() * 0.3) % 360;
+    ctx.shadowBlur = 25;
+    ctx.shadowColor = `hsl(${hue}, 100%, 60%)`;
+    ctx.strokeStyle = `hsl(${hue}, 100%, 60%)`;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, btnW, btnH);
+    ctx.fillStyle = `hsla(${hue}, 100%, 60%, .15)`;
+    ctx.fillRect(x, y, btnW, btnH);
+    ctx.fillStyle = `hsl(${hue}, 100%, 70%)`;
+    ctx.font = "bold 15px Arial";
+    ctx.fillText("🎰 ガチャ (🪙300)", W/2, y + 26);
+  }
   {
     const cx = TITLE_SETTINGS_BTN_X;
     const cy = TITLE_SETTINGS_BTN_Y;
@@ -5722,19 +5487,15 @@ function drawTitle() {
     ctx.textBaseline = "alphabetic";
     ctx.restore();
   }
-
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#aaa";
   ctx.font = "10px Arial";
   ctx.textAlign = "center";
-  ctx.fillText("(S:ショップ / M:ミッション / C:縛り / T:スタディ / ESC:ポーズ)", W/2, 585);
-
+  ctx.fillText("(S:ショップ / M:ミッション / C:縛り / T:スタディ / G:ガチャ / ESC:ポーズ)", W/2, 585);
   ctx.fillStyle = "#ffcc00";
   ctx.font = "10px Arial";
   ctx.fillText(`ボスを ${BOSS_KILL_TARGET} 回倒すとゲームクリア！`, W/2, 605);
-
   ctx.textAlign = "left";
-
   if (showDailyBonusPopup) drawDailyBonusPopup();
 }
 
@@ -5784,6 +5545,7 @@ function drawDailyBonusPopup() {
   ctx.textAlign = "left";
 }
 
+/* ============ ショップ ============ */
 function drawShop() {
   ctx.fillStyle = "rgba(0,0,8,.95)";
   ctx.fillRect(0, 0, W, H);
@@ -5947,9 +5709,7 @@ function drawShop() {
     ctx.textAlign = "left";
   }
   ctx.restore();
-  const backBtnY = H - 45;
-  const backBtnW = 200;
-  const backBtnX = (W - backBtnW) / 2;
+  const backBtnY = H - 45, backBtnW = 200, backBtnX = (W - backBtnW) / 2;
   ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc";
   ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
   ctx.strokeRect(backBtnX, backBtnY - 22, backBtnW, 44);
@@ -5962,6 +5722,7 @@ function drawShop() {
   ctx.textAlign = "left";
 }
 
+/* ============ ミッション ============ */
 function drawMissionScreen() {
   ctx.fillStyle = "rgba(0,0,8,.95)";
   ctx.fillRect(0, 0, W, H);
@@ -6021,10 +5782,8 @@ function drawMissionScreen() {
     ctx.font = "bold 13px Arial";
     ctx.textAlign = "right";
     ctx.fillText(`報酬 🪙${m.reward}`, MENU_MARGIN + MENU_WIDTH - 16, y + 78);
-    const btnW = MENU_WIDTH - 32;
-    const btnH = 36;
-    const btnX = MENU_MARGIN + 16;
-    const btnY = y + 90;
+    const btnW = MENU_WIDTH - 32, btnH = 36;
+    const btnX = MENU_MARGIN + 16, btnY = y + 90;
     if (m.claimed) {
       ctx.fillStyle = "#444"; ctx.fillRect(btnX, btnY, btnW, btnH);
       ctx.fillStyle = "#888";
@@ -6054,9 +5813,7 @@ function drawMissionScreen() {
     ctx.shadowBlur = 0;
     ctx.textAlign = "left";
   }
-  const backBtnY = H - 45;
-  const backBtnW = 200;
-  const backBtnX = (W - backBtnW) / 2;
+  const backBtnY = H - 45, backBtnW = 200, backBtnX = (W - backBtnW) / 2;
   ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc";
   ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
   ctx.strokeRect(backBtnX, backBtnY - 22, backBtnW, 44);
@@ -6069,6 +5826,7 @@ function drawMissionScreen() {
   ctx.textAlign = "left";
 }
 
+/* ============ 縛り ============ */
 function drawChallengeScreen() {
   ctx.fillStyle = "rgba(0,0,8,.95)";
   ctx.fillRect(0, 0, W, H);
@@ -6081,7 +5839,6 @@ function drawChallengeScreen() {
   ctx.font = "11px Arial";
   ctx.shadowBlur = 0;
   ctx.fillText("ルールを選んで挑戦。クリアで追加報酬！", W/2, 60);
-
   const listY = 80;
   const itemH = 58;
   const gap = 6;
@@ -6134,9 +5891,7 @@ function drawChallengeScreen() {
   ctx.textAlign = "center";
   ctx.fillText("通常プレイ（縛りなし）", W/2, normalBtnY + 24);
   ctx.textAlign = "left";
-  const backBtnY = H - 45;
-  const backBtnW = 200;
-  const backBtnX = (W - backBtnW) / 2;
+  const backBtnY = H - 45, backBtnW = 200, backBtnX = (W - backBtnW) / 2;
   ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc";
   ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
   ctx.strokeRect(backBtnX, backBtnY - 22, backBtnW, 44);
@@ -6149,6 +5904,7 @@ function drawChallengeScreen() {
   ctx.textAlign = "left";
 }
 
+/* ============ 設定 ============ */
 function drawSettingsScreen() {
   ctx.fillStyle = "rgba(0,0,8,.95)";
   ctx.fillRect(0, 0, W, H);
@@ -6157,18 +5913,14 @@ function drawSettingsScreen() {
   ctx.fillStyle = "#00ffcc";
   ctx.font = "bold 32px Arial";
   ctx.fillText("⚙ 設定", W/2, 80);
-
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 20px Arial";
   ctx.textAlign = "left";
   ctx.fillText("BGM", W/2 - 100, 220);
   ctx.textAlign = "center";
-  const toggleX = W/2 + 60;
-  const toggleW = 60;
-  const toggleH = 30;
-  const row1Y = 200;
-  const row2Y = 290;
+  const toggleX = W/2 + 60, toggleW = 60, toggleH = 30;
+  const row1Y = 200, row2Y = 290;
   ctx.shadowBlur = 15; ctx.shadowColor = "#00ffcc";
   ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 2;
   ctx.strokeRect(toggleX, row1Y, toggleW, toggleH);
@@ -6178,15 +5930,11 @@ function drawSettingsScreen() {
   ctx.font = "bold 14px Arial";
   ctx.textAlign = "center";
   ctx.fillText(bgmEnabled ? "ON" : "OFF", toggleX + (bgmEnabled ? toggleW/4 : toggleW*3/4), row1Y + 20);
-
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 16px Arial";
   ctx.textAlign = "left";
   ctx.fillText("BGM音量", W/2 - 100, 235);
-  const sliderX = W/2 - 100;
-  const sliderW = 200;
-  const sliderY = 245;
-  const sliderH = 10;
+  const sliderX = W/2 - 100, sliderW = 200, sliderY = 245, sliderH = 10;
   ctx.fillStyle = "#222";
   ctx.fillRect(sliderX, sliderY, sliderW, sliderH);
   ctx.fillStyle = "#00ffcc";
@@ -6203,7 +5951,6 @@ function drawSettingsScreen() {
   ctx.font = "12px Arial";
   ctx.textAlign = "right";
   ctx.fillText(`${Math.round(bgmVolume * 100)}%`, sliderX + sliderW + 40, sliderY + 10);
-
   ctx.textAlign = "left";
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 20px Arial";
@@ -6218,7 +5965,6 @@ function drawSettingsScreen() {
   ctx.font = "bold 14px Arial";
   ctx.textAlign = "center";
   ctx.fillText(seEnabled ? "ON" : "OFF", toggleX + (seEnabled ? toggleW/4 : toggleW*3/4), row2Y + 20);
-
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 16px Arial";
   ctx.textAlign = "left";
@@ -6240,12 +5986,10 @@ function drawSettingsScreen() {
   ctx.font = "12px Arial";
   ctx.textAlign = "right";
   ctx.fillText(`${Math.round(seVolume * 100)}%`, sliderX + sliderW + 40, sliderY2 + 10);
-
   ctx.fillStyle = "rgba(255,255,255,.5)";
   ctx.font = "12px Arial";
   ctx.textAlign = "center";
   ctx.fillText("※ 初回タップで音が有効になります", W/2, 430);
-
   const btnW = 200, btnH = 50;
   const btnX = (W - btnW)/2, btnY = H - 100;
   ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc";
@@ -6257,10 +6001,10 @@ function drawSettingsScreen() {
   ctx.font = "bold 20px Arial";
   ctx.textAlign = "center";
   ctx.fillText("閉じる", W/2, btnY + 32);
-
   ctx.textAlign = "left";
 }
 
+/* ============ 武器選択 ============ */
 function drawWeaponMenu() {
   ctx.fillStyle = "rgba(0,0,8,.92)";
   ctx.fillRect(0, 0, W, H);
@@ -6285,13 +6029,16 @@ function drawWeaponMenu() {
     ctx.shadowBlur = 0;
   }
   const avail = getAvailableWeapons();
+  const LIST_TOP = MENU_TOP + 15;
+  const LIST_BOTTOM = H - 70;
+  const LIST_H = LIST_BOTTOM - LIST_TOP;
   ctx.save();
-  ctx.beginPath(); ctx.rect(0, MENU_TOP + 15, W, MENU_VIEW_HEIGHT - 15); ctx.clip();
+  ctx.beginPath(); ctx.rect(0, LIST_TOP, W, LIST_H); ctx.clip();
   for (let i = 0; i < avail.length; i++) {
     const key = avail[i];
     const w = weapons[key];
-    const y = MENU_TOP + 15 + i*(MENU_ITEM_HEIGHT+MENU_GAP) - menuScrollY;
-    if (y + MENU_ITEM_HEIGHT < MENU_TOP || y > H - 60) continue;
+    const y = LIST_TOP + i*(MENU_ITEM_HEIGHT+MENU_GAP) - menuScrollY;
+    if (y + MENU_ITEM_HEIGHT < LIST_TOP || y > LIST_BOTTOM) continue;
     const isFusionSelected = fusionMode && fusionSelected.includes(key);
     const rec = saveData.weaponRecords[key];
     const isCleared = rec && rec.cleared;
@@ -6351,13 +6098,11 @@ function drawWeaponMenu() {
   ctx.restore();
   if (fusionMode) {
     if (fusionSelected.length >= 2) {
-      const btnY = H - 45;
-      const btnW = 220;
+      const btnY = H - 45, btnW = 220;
       const btnX = (W - btnW) / 2;
       const pulse = 0.5 + Math.sin(Date.now()*0.01) * 0.5;
       ctx.shadowBlur = 30; ctx.shadowColor = "#00ffcc";
-      ctx.strokeStyle = "#00ffcc";
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
       ctx.strokeRect(btnX, btnY - 22, btnW, 44);
       ctx.fillStyle = `rgba(0, 255, 204, ${0.2 + pulse * 0.2})`;
       ctx.fillRect(btnX, btnY - 22, btnW, 44);
@@ -6383,6 +6128,7 @@ function drawWeaponMenu() {
   ctx.textAlign = "left";
 }
 
+/* ============ 必殺選択 ============ */
 function drawSpecialMenu() {
   ctx.fillStyle = "rgba(0,0,8,.92)";
   ctx.fillRect(0, 0, W, H);
@@ -6403,13 +6149,16 @@ function drawSpecialMenu() {
     ctx.shadowBlur = 0;
   }
   const avail = getAvailableSpecials();
+  const LIST_TOP = MENU_TOP + 15;
+  const LIST_BOTTOM = H - 70;
+  const LIST_H = LIST_BOTTOM - LIST_TOP;
   ctx.save();
-  ctx.beginPath(); ctx.rect(0, MENU_TOP + 15, W, MENU_VIEW_HEIGHT - 15); ctx.clip();
+  ctx.beginPath(); ctx.rect(0, LIST_TOP, W, LIST_H); ctx.clip();
   for (let i = 0; i < avail.length; i++) {
     const key = avail[i];
     const sp = specials[key];
-    const y = MENU_TOP + 15 + i*(MENU_ITEM_HEIGHT+MENU_GAP) - specialMenuScrollY;
-    if (y + MENU_ITEM_HEIGHT < MENU_TOP || y > H - 60) continue;
+    const y = LIST_TOP + i*(MENU_ITEM_HEIGHT+MENU_GAP) - specialMenuScrollY;
+    if (y + MENU_ITEM_HEIGHT < LIST_TOP || y > LIST_BOTTOM) continue;
     const isSelected = selectedSpecial === key;
     let borderColor = sp.color;
     let borderW = 2;
@@ -6450,6 +6199,7 @@ function drawSpecialMenu() {
   ctx.textAlign = "left";
 }
 
+/* ============ ゲーム中UI ============ */
 function drawGameUI() {
   ctx.fillStyle = "#222"; ctx.fillRect(20, 20, 200, 16);
   ctx.fillStyle = player.hp <= 15 ? "#ff3344" : "#00ff66";
@@ -6597,19 +6347,15 @@ function drawPauseScreen() {
   ctx.save();
   ctx.fillStyle = "rgba(0,0,10,.85)";
   ctx.fillRect(0, 0, W, H);
-
   if (!pauseBackToTitleConfirm) {
     ctx.textAlign = "center";
     ctx.shadowBlur = 30; ctx.shadowColor = "#00ffcc";
     ctx.fillStyle = "#00ffcc";
     ctx.font = "bold 40px Arial";
     ctx.fillText("⏸ PAUSE", W/2, H/2 - 140);
-
     const btnW = 240, btnH = 60;
     const btnX = (W - btnW) / 2;
-    const resumeY = H/2 - 80;
-    const quitY = H/2 + 10;
-
+    const resumeY = H/2 - 80, quitY = H/2 + 10;
     ctx.shadowBlur = 25; ctx.shadowColor = "#00ffcc";
     ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
     ctx.strokeRect(btnX, resumeY, btnW, btnH);
@@ -6618,7 +6364,6 @@ function drawPauseScreen() {
     ctx.fillStyle = "#00ffcc";
     ctx.font = "bold 22px Arial";
     ctx.fillText("▶ 再開", W/2, resumeY + 40);
-
     ctx.shadowBlur = 25; ctx.shadowColor = "#ffcc00";
     ctx.strokeStyle = "#ffcc00"; ctx.lineWidth = 3;
     ctx.strokeRect(btnX, quitY, btnW, btnH);
@@ -6635,22 +6380,17 @@ function drawPauseScreen() {
     ctx.fillStyle = "#ffcc00";
     ctx.font = "bold 28px Arial";
     ctx.fillText("中断しますか？", W/2, H/2 - 100);
-
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 16px Arial";
     ctx.shadowBlur = 10;
     const previewCoins = calcAbortCoins();
     ctx.fillText(`獲得コイン: 🪙 +${previewCoins}`, W/2, H/2 - 50);
-
     ctx.font = "12px Arial";
     ctx.fillStyle = "rgba(255,255,255,.7)";
     ctx.fillText("(ここまでのスコアに応じて獲得)", W/2, H/2 - 25);
-
     const btnW = 140, btnH = 50;
     const btnY = H/2 + 30;
-    const yesX = W/2 - btnW - 8;
-    const noX = W/2 + 8;
-
+    const yesX = W/2 - btnW - 8, noX = W/2 + 8;
     ctx.shadowBlur = 20; ctx.shadowColor = "#ff6666";
     ctx.strokeStyle = "#ff6666"; ctx.lineWidth = 3;
     ctx.strokeRect(yesX, btnY, btnW, btnH);
@@ -6659,7 +6399,6 @@ function drawPauseScreen() {
     ctx.fillStyle = "#ff6666";
     ctx.font = "bold 20px Arial";
     ctx.fillText("はい", yesX + btnW/2, btnY + 32);
-
     ctx.shadowBlur = 20; ctx.shadowColor = "#88ff88";
     ctx.strokeStyle = "#88ff88"; ctx.lineWidth = 3;
     ctx.strokeRect(noX, btnY, btnW, btnH);
@@ -6669,16 +6408,13 @@ function drawPauseScreen() {
     ctx.font = "bold 20px Arial";
     ctx.fillText("いいえ", noX + btnW/2, btnY + 32);
   }
-
   ctx.restore();
   ctx.textAlign = "left";
 }
 
 function drawSpecialCircle() {
   if (titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || pauseScreen || settingsScreen) return;
-  const cx = SPECIAL_BTN_X;
-  const cy = SPECIAL_BTN_Y;
-  const r = SPECIAL_BTN_R;
+  const cx = SPECIAL_BTN_X, cy = SPECIAL_BTN_Y, r = SPECIAL_BTN_R;
   const ratio = studyMode ? (studyBurstGauge / STUDY_BURST_MAX) : (specialGauge / SPECIAL_MAX);
   const full = studyMode ? (studyBurstGauge >= STUDY_BURST_MAX) : (specialGauge >= SPECIAL_MAX);
   const spColor = studyMode ? "#66ccff" : specials[selectedSpecial].color;
@@ -6729,7 +6465,6 @@ function drawGameOver() {
   ctx.fillStyle = "rgba(0,0,0,.90)";
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
-
   if (gameClear) {
     let y = 60;
     const t = Date.now() * 0.005;
@@ -6740,7 +6475,6 @@ function drawGameOver() {
     ctx.font = "bold 44px Arial";
     ctx.fillText("GAME CLEAR!", W/2, y);
     y += 42;
-
     ctx.shadowBlur = 25; ctx.shadowColor = "#ffcc00";
     ctx.fillStyle = "#ffcc00";
     ctx.font = "bold 20px Arial";
@@ -6750,7 +6484,6 @@ function drawGameOver() {
     else if (fusionMode && activeWeapons.length > 1) subtitle = "⚡ FUSION CLEAR ⚡";
     ctx.fillText(subtitle, W/2, y);
     y += 40;
-
     ctx.shadowBlur = 15; ctx.shadowColor = "#ffd700";
     ctx.fillStyle = "#ffd700";
     ctx.font = "bold 22px Arial";
@@ -6759,7 +6492,6 @@ function drawGameOver() {
     ctx.font = "bold 13px Arial";
     ctx.fillText(`所持コイン: ${saveData.coins}`, W/2, y);
     y += 32;
-
     if (studyMode) {
       ctx.shadowBlur = 12; ctx.shadowColor = "#66ccff";
       ctx.fillStyle = "#66ccff";
@@ -6783,7 +6515,6 @@ function drawGameOver() {
         y += 30;
       } else y += 10;
     }
-
     ctx.shadowBlur = 12; ctx.shadowColor = "#fff";
     ctx.fillStyle = "#fff";
     ctx.font = "bold 22px Arial";
@@ -6897,27 +6628,7 @@ function drawAbortPopup() {
   ctx.textAlign = "left";
 }
 
-let comboMilestones = {};
-function addCombo() {
-  combo++;
-  comboTimer = 120;
-  if (combo > maxCombo) maxCombo = combo;
-  const milestones = [5, 10, 15, 20, 30, 40, 50, 75, 100];
-  const colors = ["#00ffcc", "#99ff66", "#ffcc00", "#ff8844", "#ff3366", "#ff00ff", "#00ffff", "#ffffff", "#ff00ff"];
-  for (let i = 0; i < milestones.length; i++) {
-    const m = milestones[i];
-    if (combo === m && !comboMilestones[m]) {
-      comboMilestones[m] = true;
-      sfx.combo();
-      const col = colors[i];
-      shake(25); flash(col, 8); chroma(12); hitStopAdd(4);
-      burst(player.x, player.y, 60, col);
-      burst(player.x, player.y, 30, "#ffffff");
-    }
-  }
-}
-function comboMultiplier() { return 1 + Math.floor(combo/5) * 0.5; }
-
+/* ============ draw メイン ============ */
 function draw() {
   drawBackground();
   if (settingsScreen) { drawSettingsScreen(); return; }
@@ -6926,15 +6637,12 @@ function draw() {
   if (missionScreen) { drawMissionScreen(); return; }
   if (challengeScreen) { drawChallengeScreen(); return; }
   if (studySelectScreen) { drawStudySelectScreen(); return; }
-
   ctx.save();
   ctx.translate(W/2, H/2);
   ctx.scale(zoomPulse, zoomPulse);
   ctx.translate(-W/2, -H/2);
   ctx.translate(shakeX, shakeY);
-
   drawEffects();
-
   if (!weaponMenu && !specialMenu) {
     drawPlayer();
     drawKnifeAim();
@@ -6944,7 +6652,6 @@ function draw() {
     for (const b of bullets) drawBullet(b);
     drawEnemies();
     drawPowerups();
-
     ctx.save();
     for (const b of enemyBullets) {
       const hue = b.hue || 30;
@@ -6958,29 +6665,23 @@ function draw() {
       ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.45, 0, TAU); ctx.fill();
     }
     ctx.restore();
-
     drawLightning();
     drawDamageNumbers();
     drawGameUI();
-
     drawSpecialEffect();
     drawSpecialOverlays();
     drawTheWorldEffect();
     drawMudaMudaEffect();
   }
-
   if (weaponMenu) drawWeaponMenu();
   if (specialMenu) drawSpecialMenu();
   if (gameOver) drawGameOver();
   ctx.restore();
-
   drawPauseButton();
   drawMuteButton();
   drawSpecialCircle();
-
   if (studyQuizActive) drawStudyQuiz();
   if (pauseScreen) drawPauseScreen();
-
   if (flashScreen > 0 && FX.flashMultiplier > 0) {
     ctx.save();
     ctx.globalAlpha = Math.min(1, flashScreen / 10) * 0.7 * FX.flashMultiplier;
@@ -6988,7 +6689,6 @@ function draw() {
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
   }
-
   if (chromaOffset > 0.5 && FX.chromaMultiplier > 0) {
     ctx.save();
     ctx.globalCompositeOperation = "screen";
@@ -6999,8 +6699,14 @@ function draw() {
     ctx.fillRect(chromaOffset, chromaOffset, W, H);
     ctx.restore();
   }
+  const vg = ctx.createRadialGradient(W/2, H/2, W*0.3, W/2, H/2, W*0.75);
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(1, `rgba(255,0,68,${dangerTint * 0.35})`);
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
 }
 
+/* ============ リセットキー ============ */
 window.addEventListener("keydown", e => {
   const key = e.key.toLowerCase();
   if (key === "r" && titleScreen) {
@@ -7015,6 +6721,7 @@ window.addEventListener("keydown", e => {
   }
 });
 
+/* ============ 初期化 & ループ ============ */
 createStars();
 checkDailyBonus();
 checkDailyMissions();
@@ -7025,8 +6732,7 @@ function loop() {
   requestAnimationFrame(loop);
 }
 loop();
-</script>
-<!-- ===== ONLINE VS (追加機能): PeerJS(WebRTC) 経由の1対1対戦 ===== -->
+</script><!-- ===== ONLINE VS (追加機能): PeerJS(WebRTC) 経由の1対1対戦 ===== -->
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 (function(){
@@ -7051,7 +6757,6 @@ const inR=(p,x,y,w,h)=>p.x>=x&&p.x<=x+w&&p.y>=y&&p.y<=y+h;
 const send=o=>{try{if(S.conn&&S.conn.open)S.conn.send(o)}catch(e){}};
 const titleOk=()=>titleScreen&&!showDailyBonusPopup&&!abortPopup&&!settingsScreen&&!S.on;
 
-/* ---- 接続 ---- */
 function clr(){for(const a of[particles,damageNumbers,shockwaves,powerups])a.length=0;screenShake=flashScreen=chromaOffset=0;zoomPulse=1;shakeX=shakeY=0}
 function cleanup(){clr();try{S.conn&&S.conn.close()}catch(e){}try{S.peer&&S.peer.destroy()}catch(e){}S.conn=S.peer=null;S.rm=S.orm=S.gone=false;S.wins=S.loses=0}
 function back(m){cleanup();S.scr="menu";S.msg=m||""}
@@ -7095,7 +6800,6 @@ function bind(c){
   });
 }
 
-/* ---- バトル ---- */
 function begin(){
   clr();S.scr="count";S.t=0;S.mb=[];S.ob=[];S.res="";S.msg="";S.tx=null;S.lv=1;S.combo=0;S.ct=0;S.g=0;S.rm=S.orm=S.gone=false;
   S.me={x:W/2,y:H-110,hp:HP,cd:0,inv:0};S.op={x:W/2,y:110,tx:W/2,ty:110,hp:HP};
@@ -7190,7 +6894,6 @@ function step(){
   if(S.t%2===0)send({t:"s",x:m.x,y:m.y,hp:m.hp});
 }
 
-/* ---- 描画 ---- */
 function T(s,x,y,sz,col){ctx.font=`bold ${sz}px Arial`;ctx.fillStyle=col;ctx.shadowColor=col;ctx.shadowBlur=12;ctx.fillText(s,x,y);ctx.shadowBlur=0}
 function btn(b){
   ctx.fillStyle=b.on?b.c:"rgba(0,0,0,.6)";ctx.strokeStyle=b.c;ctx.lineWidth=2;
@@ -7282,7 +6985,6 @@ function titleBtn(){
   btn({...TB,l:"🌐 オンライン対戦",c:"#ff00ff"});ctx.restore();
 }
 
-/* ---- 既存ループへの差し込み ---- */
 const _u=window.update,_d=window.draw;
 window.update=function(){
   if(!S.on)return _u();
@@ -7295,7 +6997,6 @@ window.draw=function(){
   _d();if(titleOk())titleBtn();
 };
 
-/* ---- 入力 ---- */
 const P=e=>{const r=canvas.getBoundingClientRect(),q=e.changedTouches?e.changedTouches[0]:e;return{x:(q.clientX-r.left)*W/r.width,y:(q.clientY-r.top)*H/r.height}};
 function down(e){
   if(e.target!==canvas)return;
