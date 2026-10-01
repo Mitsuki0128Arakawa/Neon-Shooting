@@ -1,5 +1,3 @@
-
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -26,11 +24,17 @@ canvas {
   50% { border-color: #ff00ff; }
 }
 #loading { position: fixed; color: #00ffcc; font-size: 20px; }
+#nameInput {
+  position: fixed; opacity: 0; pointer-events: none;
+  top: 0; left: 0; width: 1px; height: 1px;
+  z-index: 9999;
+}
 </style>
 </head>
 <body>
 <div id="loading">LOADING...</div>
 <canvas id="game" width="480" height="720"></canvas>
+<input id="nameInput" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 <script>
 "use strict";
 
@@ -222,7 +226,8 @@ function createDefaultSave() {
     upgrades: {}, dailyMissions: null, dailyMissionsDate: null,
     missionProgress: {}, challengeRecords: {},
     studyGrade: 1, studyHighScore: 0, studyClears: 0,
-    bgmVolume: 0.35, seVolume: 0.5, bgmEnabled: true, seEnabled: true
+    bgmVolume: 0.35, seVolume: 0.5, bgmEnabled: true, seEnabled: true,
+    userName: "", giftInbox: [], giftSent: []
   };
 }
 let saveData = createDefaultSave();
@@ -251,6 +256,9 @@ function loadSave() {
       if (typeof saveData.seVolume !== "number") saveData.seVolume = 0.5;
       if (typeof saveData.bgmEnabled !== "boolean") saveData.bgmEnabled = true;
       if (typeof saveData.seEnabled !== "boolean") saveData.seEnabled = true;
+      if (typeof saveData.userName !== "string") saveData.userName = "";
+      if (!Array.isArray(saveData.giftInbox)) saveData.giftInbox = [];
+      if (!Array.isArray(saveData.giftSent)) saveData.giftSent = [];
       saveData.ownedWeapons = saveData.ownedWeapons.filter(k => k !== "math");
     }
   } catch (e) { saveData = createDefaultSave(); }
@@ -694,7 +702,9 @@ const THEME_CONFIG = {
   theme_sunset: { bg:"#1a0a05", nebulaHues:[20,40,350,10], starHue:20, auroraHue:20, milkyHue:20, hueDrift:0 },
   theme_toxic: { bg:"#04140a", nebulaHues:[100,130,80,150], starHue:100, auroraHue:100, milkyHue:100, hueDrift:0 }
 };
-function getThemeConfig() { return THEME_CONFIG[getEquippedTheme()] || THEME_CONFIG.theme_default; }/* ========== 背景 ========== */
+function getThemeConfig() { return THEME_CONFIG[getEquippedTheme()] || THEME_CONFIG.theme_default; }
+
+/* ========== 背景 ========== */
 function createStars() {
   stars = [];
   const cfg = getThemeConfig();
@@ -3008,7 +3018,9 @@ function updateBullets() {
     }
     if (b.life <= 0 || b.x < -100 || b.x > W+100 || b.y < -100 || b.y > H+100) bullets.splice(i,1);
   }
-}/* ========== 敵更新 ========== */
+}
+
+/* ========== 敵更新 ========== */
 function updateEnemies() {
   const isStopped = theWorldTimer > 0 || studyQuizActive || pauseScreen;
   for (let i = enemies.length-1; i >= 0; i--) {
@@ -4632,7 +4644,7 @@ function chk(){if(S.host&&S.rm&&S.orm&&S.conn&&S.conn.open){send({t:"go"});begin
 function rematch(){if(S.scr!=="result"||S.rm||S.gone||!S.conn||!S.conn.open)return;S.rm=true;send({t:"rm"});chk();}
 function quit(){send({t:"quit"});back();}
 function cw(d){if(S.rm)return;S.w=(S.w+d+WP.length)%WP.length;}
-const hsl=(h,l)=>`hsl(${h},100%,${l||60}%)`;
+const hsl=(h,l)=>`hsl(${h},100%,${l||60})`;
 function dealt(b){burst(b.x,b.y,16,hsl(rainbowHue));showDamage(b.x,b.y-10,b.d,"#ffffff");shake(4);chroma(4);sfx.enemyHit();addG(b.d*1.5);S.combo++;S.ct=90;if(S.combo%5===0){showDamage(W/2,H/2+60,S.combo+" COMBO!","#ff00ff");sfx.combo();zoomPulse=1.04;flash("#ff00ff",4)}if(Math.random()<.14){const r=Math.random();powerups.push({x:40+Math.random()*(W-80),y:-10,vy:1.6,r:14,kind:r<.45?"exp":r<.8?"heal":"bomb",life:700,bob:0})}}
 function takeDmg(n){const m=S.me;if(S.scr!=="play"||m.inv>0)return false;m.hp-=n;m.inv=20;S.combo=0;S.ct=0;addG(n);sfx.playerHit();shake(50);flash("#ff0044",12);chroma(15);burst(m.x,m.y,60,"#ff0044");burst(m.x,m.y,30,"#ffffff");showDamage(m.x,m.y-24,n,"#ff3366");if(m.hp<=0){m.hp=0;send({t:"s",x:m.x,y:m.y,hp:0});send({t:"dead"});fin("lose");shake(120);flash("#ffffff",25)}return true;}
 function collect(p){const m=S.me;if(p.kind==="heal"){m.hp=Math.min(HP,m.hp+15);showDamage(p.x,p.y,"+15 HP","#00ff66");burst(p.x,p.y,30,"#00ff66");shake(8);sfx.powerup()}else if(p.kind==="bomb"){for(const b of S.ob)burst(b.x,b.y,4,"#ffcc00");S.ob=[];send({t:"dmg",n:8});sfx.special();shockwaves.push({x:m.x,y:m.y,radius:10,maxRadius:800,life:50,color:"255,200,0"});shake(40);flash("#ffcc00",12);chroma(20);burst(p.x,p.y,100,"#ffcc00");showDamage(p.x,p.y,"BOMB!","#ffcc00");}else{S.lv=Math.min(4,S.lv+1);showDamage(p.x,p.y,"LEVEL UP! Lv"+S.lv,"#66ccff");burst(p.x,p.y,40,"#66ccff");sfx.levelUp();flash("#66ccff",6);zoomPulse=1.05}}
@@ -5407,6 +5419,667 @@ window.drawOrbit=function(){
 })();
 </script>
 
+<!-- ===== 名前登録 & プレゼント機能 ===== -->
+<script>
+(function(){
+"use strict";
+
+/* セーブデータ保証 */
+function ensureGiftFields(){
+  if (typeof saveData.userName !== "string") saveData.userName = "";
+  if (!Array.isArray(saveData.giftInbox)) saveData.giftInbox = [];
+  if (!Array.isArray(saveData.giftSent)) saveData.giftSent = [];
+}
+ensureGiftFields();
+
+/* ========== 名前入力 ========== */
+let nameInputActive = false;
+let nameInputText = "";
+let nameInputError = "";
+const nameEl = document.getElementById("nameInput");
+
+function needsNameInput(){ return !saveData.userName || saveData.userName.trim() === ""; }
+function openNameInput(){
+  if (nameInputActive) return;
+  nameInputActive = true;
+  nameInputText = saveData.userName || "";
+  nameInputError = "";
+  if (nameEl) {
+    nameEl.value = nameInputText;
+    nameEl.style.opacity = "1";
+    nameEl.style.pointerEvents = "auto";
+    nameEl.style.top = "50%";
+    nameEl.style.left = "50%";
+    nameEl.style.width = "300px";
+    nameEl.style.height = "44px";
+    nameEl.style.transform = "translate(-50%,-50%)";
+    nameEl.style.fontSize = "20px";
+    nameEl.style.textAlign = "center";
+    nameEl.style.zIndex = "9999";
+    nameEl.style.background = "#001a1a";
+    nameEl.style.color = "#00ffcc";
+    nameEl.style.border = "2px solid #00ffcc";
+    nameEl.style.borderRadius = "6px";
+    nameEl.focus();
+  }
+}
+function closeNameInput(){
+  nameInputActive = false;
+  if (nameEl) {
+    nameEl.style.opacity = "0";
+    nameEl.style.pointerEvents = "none";
+    nameEl.style.top = "0";
+    nameEl.style.left = "0";
+    nameEl.style.width = "1px";
+    nameEl.style.height = "1px";
+    nameEl.style.transform = "none";
+    nameEl.blur();
+  }
+}
+function confirmNameInput(){
+  const t = (nameEl ? nameEl.value : nameInputText).trim();
+  if (t.length < 1) { nameInputError = "名前を入力してください"; return; }
+  if (t.length > 12) { nameInputError = "12文字以内で入力してください"; return; }
+  saveData.userName = t;
+  writeSave();
+  closeNameInput();
+  sfx.coin(); shake(20); flash("#00ffcc", 8); chroma(10);
+  burst(W/2, H/2, 60, "#00ffcc"); burst(W/2, H/2, 30, "#ffffff");
+}
+if (nameEl) {
+  nameEl.addEventListener("input", () => { nameInputText = nameEl.value; });
+  nameEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); confirmNameInput(); }
+  });
+}
+
+function drawNameInput(){
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,10,.95)";
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.shadowBlur = 30; ctx.shadowColor = "#00ffcc";
+  ctx.fillStyle = "#00ffcc"; ctx.font = "bold 32px Arial";
+  ctx.fillText("ようこそ！", W/2, 160);
+  ctx.font = "bold 18px Arial"; ctx.fillStyle = "#ffffff"; ctx.shadowBlur = 15;
+  ctx.fillText("プレイヤー名を登録してください", W/2, 210);
+  const bw = 340, bh = 60, bx = (W-bw)/2, by = 280;
+  ctx.shadowBlur = 25; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
+  ctx.strokeRect(bx, by, bw, bh);
+  ctx.fillStyle = "rgba(0,255,204,.1)"; ctx.fillRect(bx, by, bw, bh);
+  if (nameInputError) {
+    ctx.fillStyle = "#ff6666"; ctx.font = "bold 14px Arial"; ctx.shadowBlur = 10; ctx.shadowColor = "#ff6666";
+    ctx.fillText(nameInputError, W/2, by+90);
+  }
+  const cbw = 220, cbh = 54, cbx = (W-cbw)/2, cby = 400;
+  const pulse = 0.5 + Math.sin(Date.now()*0.008)*0.5;
+  ctx.shadowBlur = 25; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
+  ctx.strokeRect(cbx, cby, cbw, cbh);
+  ctx.fillStyle = `rgba(0,255,204,${0.15+pulse*0.15})`;
+  ctx.fillRect(cbx, cby, cbw, cbh);
+  ctx.fillStyle = "#00ffcc"; ctx.font = "bold 20px Arial"; ctx.shadowBlur = 15;
+  ctx.fillText("決定", W/2, cby+36);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "12px Arial";
+  ctx.fillText("テキストボックスに入力 → Enter または 決定ボタン", W/2, 500);
+  ctx.restore();
+  ctx.textAlign = "left";
+}
+
+/* ========== プレゼント機能 ========== */
+let giftScreen = "none";
+let giftSelectedType = null;
+let giftSelectedCoin = 100;
+let giftSelectedWeapon = null;
+let giftTargetUser = "";
+let giftMessage = "";
+let giftTargetError = "";
+let giftMessageError = "";
+let giftWeaponScroll = 0;
+let inboxScreen = false;
+let inboxScroll = 0;
+const GIFT_COIN_PRESETS = [50, 100, 300, 500, 1000];
+
+/* ★ プレゼントボタンは右上（設定ボタンの下）に丸ボタンとして配置 */
+const TITLE_GIFT_BTN_R = 24;
+const TITLE_GIFT_BTN_X = W - TITLE_GIFT_BTN_R - 16;   // 設定ボタンと同じX
+const TITLE_GIFT_BTN_Y = 40 + 24 + 24 + 16;           // 設定ボタンの下
+
+function openGiftMenu(){
+  giftScreen = "menu";
+  giftSelectedType = null;
+  giftSelectedCoin = 100;
+  giftSelectedWeapon = null;
+  giftTargetUser = "";
+  giftMessage = "";
+  giftTargetError = "";
+  giftMessageError = "";
+  sfx.tap();
+}
+function closeGift(){ giftScreen = "none"; sfx.tap(); }
+
+function canSendGift(){
+  if (giftSelectedType === "coin") return saveData.coins >= giftSelectedCoin && giftSelectedCoin > 0;
+  if (giftSelectedType === "weapon") {
+    if (!giftSelectedWeapon) return false;
+    return saveData.ownedWeapons.filter(k => k === giftSelectedWeapon).length > 1;
+  }
+  return false;
+}
+
+function sendGift(){
+  if (!canSendGift()) return;
+  const gift = {
+    from: saveData.userName,
+    to: giftTargetUser.trim(),
+    type: giftSelectedType,
+    value: giftSelectedType === "coin" ? giftSelectedCoin : giftSelectedWeapon,
+    message: giftMessage.trim(),
+    date: Date.now()
+  };
+  if (giftSelectedType === "coin") {
+    saveData.coins -= giftSelectedCoin;
+  } else {
+    const idx = saveData.ownedWeapons.indexOf(giftSelectedWeapon);
+    if (idx >= 0) saveData.ownedWeapons.splice(idx, 1);
+    if (selectedWeapon === giftSelectedWeapon) selectedWeapon = "normal";
+    if (activeWeapons.includes(giftSelectedWeapon)) {
+      activeWeapons = activeWeapons.filter(k => k !== giftSelectedWeapon);
+      if (activeWeapons.length === 0) activeWeapons = ["normal"];
+    }
+  }
+  saveData.giftSent.push(gift);
+  if (gift.to === saveData.userName) saveData.giftInbox.push(gift);
+  try {
+    const SHARED_KEY = "neonBulletGiftInbox_v1";
+    const raw = localStorage.getItem(SHARED_KEY);
+    const box = raw ? JSON.parse(raw) : [];
+    box.push(gift);
+    localStorage.setItem(SHARED_KEY, JSON.stringify(box));
+  } catch (e) {}
+  writeSave();
+  sfx.clear();
+  shake(40); flash("#ffd700", 12); chroma(20);
+  burst(W/2, H/2, 100, "#ffd700"); burst(W/2, H/2, 50, "#ffffff");
+  giftScreen = "sent";
+}
+
+function receiveGifts(){
+  try {
+    const SHARED_KEY = "neonBulletGiftInbox_v1";
+    const raw = localStorage.getItem(SHARED_KEY);
+    if (!raw) return;
+    let box = JSON.parse(raw);
+    const mine = box.filter(g => g.to === saveData.userName);
+    if (mine.length === 0) return;
+    for (const g of mine) {
+      if (g.type === "coin") saveData.coins = (saveData.coins || 0) + g.value;
+      else if (g.type === "weapon") { if (!saveData.ownedWeapons.includes(g.value)) saveData.ownedWeapons.push(g.value); }
+      saveData.giftInbox.push(g);
+    }
+    box = box.filter(g => g.to !== saveData.userName);
+    localStorage.setItem(SHARED_KEY, JSON.stringify(box));
+    writeSave();
+    showGiftReceivePopup(mine.length);
+  } catch (e) {}
+}
+
+let giftReceivePopup = null;
+function showGiftReceivePopup(n){ giftReceivePopup = { timer: 240, count: n }; }
+function drawGiftReceivePopup(){
+  if (!giftReceivePopup) return;
+  giftReceivePopup.timer--;
+  if (giftReceivePopup.timer <= 0) { giftReceivePopup = null; return; }
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, giftReceivePopup.timer/30);
+  const bw = 340, bh = 100, bx = (W-bw)/2, by = 120;
+  ctx.fillStyle = "rgba(0,0,10,.9)"; ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 3; ctx.shadowBlur = 25; ctx.shadowColor = "#ffd700";
+  ctx.strokeRect(bx, by, bw, bh);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ffd700"; ctx.font = "bold 20px Arial";
+  ctx.fillText("🎁 プレゼント受信！", W/2, by+38);
+  ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
+  ctx.fillText(`${giftReceivePopup.count} 件のギフトを受け取りました`, W/2, by+70);
+  ctx.restore();
+  ctx.textAlign = "left";
+}
+
+function drawGiftScreen(){
+  if (giftScreen === "none") return;
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,10,.95)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.shadowBlur = 25; ctx.shadowColor = "#ffd700";
+  ctx.fillStyle = "#ffd700"; ctx.font = "bold 26px Arial";
+  ctx.fillText("🎁 プレゼント", W/2, 50);
+  ctx.shadowBlur = 10; ctx.fillStyle = "#fff"; ctx.font = "bold 13px Arial";
+  ctx.fillText(`あなた: ${saveData.userName}`, W/2, 75);
+  ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
+  ctx.fillText(`🪙 ${saveData.coins}`, W/2, 95);
+
+  if (giftScreen === "menu") {
+    const bw = 300, bh = 60, bx = (W-bw)/2;
+    const items = [
+      { y: 180, label: "🪙 コインをプレゼント", color: "#ffd700" },
+      { y: 260, label: "⚔️ 武器をプレゼント", color: "#00ffcc" },
+      { y: 340, label: "🎁 受信BOXを見る", color: "#88ff88" },
+      { y: 440, label: "◀ 戻る", color: "#888888" }
+    ];
+    for (const it of items) {
+      ctx.shadowBlur = 20; ctx.shadowColor = it.color; ctx.strokeStyle = it.color; ctx.lineWidth = 3;
+      ctx.strokeRect(bx, it.y, bw, bh);
+      ctx.fillStyle = it.color + "22"; ctx.fillRect(bx, it.y, bw, bh);
+      ctx.fillStyle = it.color; ctx.font = "bold 18px Arial";
+      ctx.fillText(it.label, W/2, it.y+38);
+    }
+  }
+  else if (giftScreen === "coin") {
+    ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
+    ctx.fillText("送るコイン数を選択", W/2, 160);
+    const bw = 140, bh = 50, gap = 12;
+    for (let i = 0; i < GIFT_COIN_PRESETS.length; i++) {
+      const c = i % 2, r = Math.floor(i/2);
+      const x = (W - (bw*2+gap))/2 + c*(bw+gap);
+      const y = 200 + r*(bh+gap);
+      const v = GIFT_COIN_PRESETS[i];
+      const can = saveData.coins >= v;
+      const col = can ? "#ffd700" : "#555";
+      ctx.shadowBlur = can ? 15 : 0; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = 3;
+      ctx.strokeRect(x, y, bw, bh);
+      ctx.fillStyle = can ? "rgba(255,215,0,.15)" : "rgba(80,80,80,.3)";
+      ctx.fillRect(x, y, bw, bh);
+      ctx.fillStyle = can ? "#ffd700" : "#888"; ctx.font = "bold 20px Arial";
+      ctx.fillText(`🪙 ${v}`, x+bw/2, y+33);
+    }
+    ctx.fillStyle = "#fff"; ctx.font = "bold 14px Arial";
+    ctx.fillText(`選択中: 🪙 ${giftSelectedCoin}`, W/2, 380);
+    const sx = 60, sw = W-120, sy = 400;
+    ctx.fillStyle = "#222"; ctx.fillRect(sx, sy, sw, 10);
+    ctx.fillStyle = "#ffd700"; ctx.shadowBlur = 10; ctx.shadowColor = "#ffd700";
+    const ratio = Math.min(1, giftSelectedCoin / 1000);
+    ctx.fillRect(sx, sy, sw*ratio, 10);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(sx+sw*ratio, sy+5, 12, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 2; ctx.stroke();
+    const canGo = saveData.coins >= giftSelectedCoin && giftSelectedCoin > 0;
+    const bw2 = 140, bh2 = 50, by2 = 470;
+    const yx = W/2 - bw2 - 8, nx = W/2 + 8;
+    ctx.shadowBlur = canGo ? 20 : 0; ctx.shadowColor = "#88ff88"; ctx.strokeStyle = canGo ? "#88ff88" : "#555"; ctx.lineWidth = 3;
+    ctx.strokeRect(yx, by2, bw2, bh2);
+    ctx.fillStyle = canGo ? "rgba(136,255,136,.15)" : "rgba(80,80,80,.3)";
+    ctx.fillRect(yx, by2, bw2, bh2);
+    ctx.fillStyle = canGo ? "#88ff88" : "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillText("次へ ▶", yx+bw2/2, by2+32);
+    ctx.shadowBlur = 20; ctx.shadowColor = "#888"; ctx.strokeStyle = "#888"; ctx.lineWidth = 3;
+    ctx.strokeRect(nx, by2, bw2, bh2);
+    ctx.fillStyle = "rgba(136,136,136,.15)"; ctx.fillRect(nx, by2, bw2, bh2);
+    ctx.fillStyle = "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillText("◀ 戻る", nx+bw2/2, by2+32);
+  }
+  else if (giftScreen === "weapon") {
+    ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
+    ctx.fillText("送る武器を選択", W/2, 130);
+    ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "11px Arial";
+    ctx.fillText("※ 同じ武器を2個以上所持している場合のみ送れます", W/2, 150);
+    const list = saveData.ownedWeapons.slice();
+    const unique = [...new Set(list)];
+    const LT = 170, IH = 56, GAP = 8;
+    for (let i = 0; i < unique.length; i++) {
+      const k = unique[i];
+      const cnt = list.filter(x => x === k).length;
+      const y = LT + i*(IH+GAP) - giftWeaponScroll;
+      if (y+IH < LT || y > H-120) continue;
+      const w = weapons[k];
+      const can = cnt > 1;
+      const col = can ? w.color : "#555";
+      ctx.shadowBlur = can ? 15 : 0; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = 3;
+      ctx.strokeRect(24, y, W-48, IH);
+      ctx.fillStyle = can ? "rgba(255,255,255,.06)" : "rgba(60,60,60,.3)";
+      ctx.fillRect(24, y, W-48, IH);
+      ctx.textAlign = "left";
+      ctx.fillStyle = can ? "#fff" : "#888"; ctx.font = "bold 15px Arial";
+      ctx.fillText(w.name, 40, y+24);
+      ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "11px Arial";
+      ctx.fillText(w.description, 40, y+42);
+      ctx.textAlign = "right";
+      ctx.fillStyle = can ? "#ffd700" : "#666"; ctx.font = "bold 14px Arial";
+      ctx.fillText(`所持: ${cnt}`, W-40, y+34);
+      ctx.textAlign = "center";
+    }
+    if (giftSelectedWeapon) {
+      ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
+      ctx.fillText(`選択中: ${weapons[giftSelectedWeapon].name}`, W/2, H-90);
+    }
+    const canGo = giftSelectedWeapon && saveData.ownedWeapons.filter(k => k === giftSelectedWeapon).length > 1;
+    const bw2 = 140, bh2 = 50, by2 = H-70;
+    const yx = W/2 - bw2 - 8, nx = W/2 + 8;
+    ctx.shadowBlur = canGo ? 20 : 0; ctx.shadowColor = "#88ff88"; ctx.strokeStyle = canGo ? "#88ff88" : "#555"; ctx.lineWidth = 3;
+    ctx.strokeRect(yx, by2, bw2, bh2);
+    ctx.fillStyle = canGo ? "rgba(136,255,136,.15)" : "rgba(80,80,80,.3)";
+    ctx.fillRect(yx, by2, bw2, bh2);
+    ctx.fillStyle = canGo ? "#88ff88" : "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillText("次へ ▶", yx+bw2/2, by2+32);
+    ctx.shadowBlur = 20; ctx.shadowColor = "#888"; ctx.strokeStyle = "#888"; ctx.lineWidth = 3;
+    ctx.strokeRect(nx, by2, bw2, bh2);
+    ctx.fillStyle = "rgba(136,136,136,.15)"; ctx.fillRect(nx, by2, bw2, bh2);
+    ctx.fillStyle = "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillText("◀ 戻る", nx+bw2/2, by2+32);
+  }
+  else if (giftScreen === "target") {
+    ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
+    ctx.fillText("送信先ユーザー名を入力", W/2, 160);
+    const bw = 320, bh = 60, bx = (W-bw)/2, by = 200;
+    ctx.shadowBlur = 25; ctx.shadowColor = "#66ccff"; ctx.strokeStyle = "#66ccff"; ctx.lineWidth = 3;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = "rgba(102,204,255,.1)"; ctx.fillRect(bx, by, bw, bh);
+    ctx.shadowBlur = 10; ctx.fillStyle = "#fff"; ctx.font = "bold 22px Arial";
+    const caret = (Math.floor(Date.now()/500)%2) ? "|" : "";
+    ctx.fillText((giftTargetUser + caret) || caret, W/2, by+40);
+    if (giftTargetError) {
+      ctx.fillStyle = "#ff6666"; ctx.font = "bold 14px Arial";
+      ctx.fillText(giftTargetError, W/2, by+90);
+    }
+    const canGo = giftTargetUser.trim().length > 0;
+    const bw2 = 140, bh2 = 50, by2 = 320;
+    const yx = W/2 - bw2 - 8, nx = W/2 + 8;
+    ctx.shadowBlur = canGo ? 20 : 0; ctx.shadowColor = "#88ff88"; ctx.strokeStyle = canGo ? "#88ff88" : "#555"; ctx.lineWidth = 3;
+    ctx.strokeRect(yx, by2, bw2, bh2);
+    ctx.fillStyle = canGo ? "rgba(136,255,136,.15)" : "rgba(80,80,80,.3)";
+    ctx.fillRect(yx, by2, bw2, bh2);
+    ctx.fillStyle = canGo ? "#88ff88" : "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillText("次へ ▶", yx+bw2/2, by2+32);
+    ctx.shadowBlur = 20; ctx.shadowColor = "#888"; ctx.strokeStyle = "#888"; ctx.lineWidth = 3;
+    ctx.strokeRect(nx, by2, bw2, bh2);
+    ctx.fillStyle = "rgba(136,136,136,.15)"; ctx.fillRect(nx, by2, bw2, bh2);
+    ctx.fillStyle = "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillText("◀ 戻る", nx+bw2/2, by2+32);
+  }
+  else if (giftScreen === "message") {
+    ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
+    ctx.fillText("メッセージを入力", W/2, 160);
+    const bw = 340, bh = 120, bx = (W-bw)/2, by = 200;
+    ctx.shadowBlur = 25; ctx.shadowColor = "#66ccff"; ctx.strokeStyle = "#66ccff"; ctx.lineWidth = 3;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = "rgba(102,204,255,.1)"; ctx.fillRect(bx, by, bw, bh);
+    ctx.shadowBlur = 10; ctx.fillStyle = "#fff"; ctx.font = "16px Arial";
+    const maxW = bw - 20;
+    const words = (giftMessage + ((Math.floor(Date.now()/500)%2) ? "|" : "")).split("");
+    let line = "", lines = [];
+    for (const ch of words) {
+      if (ctx.measureText(line+ch).width > maxW) { lines.push(line); line = ch; }
+      else line += ch;
+    }
+    lines.push(line);
+    for (let i = 0; i < Math.min(lines.length, 5); i++) {
+      ctx.textAlign = "left";
+      ctx.fillText(lines[i], bx+10, by+28+i*22);
+      ctx.textAlign = "center";
+    }
+    ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.font = "13px Arial";
+    ctx.fillText(`送信先: ${giftTargetUser}`, W/2, 360);
+    ctx.fillText(`内容: ${giftSelectedType === "coin" ? "🪙 " + giftSelectedCoin : "⚔️ " + weapons[giftSelectedWeapon].name}`, W/2, 385);
+    const canGo = giftMessage.trim().length > 0;
+    const bw2 = 140, bh2 = 50, by2 = 430;
+    const yx = W/2 - bw2 - 8, nx = W/2 + 8;
+    ctx.shadowBlur = canGo ? 20 : 0; ctx.shadowColor = "#ffd700"; ctx.strokeStyle = canGo ? "#ffd700" : "#555"; ctx.lineWidth = 3;
+    ctx.strokeRect(yx, by2, bw2, bh2);
+    ctx.fillStyle = canGo ? "rgba(255,215,0,.15)" : "rgba(80,80,80,.3)";
+    ctx.fillRect(yx, by2, bw2, bh2);
+    ctx.fillStyle = canGo ? "#ffd700" : "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillText("送信 ▶", yx+bw2/2, by2+32);
+    ctx.shadowBlur = 20; ctx.shadowColor = "#888"; ctx.strokeStyle = "#888"; ctx.lineWidth = 3;
+    ctx.strokeRect(nx, by2, bw2, bh2);
+    ctx.fillStyle = "rgba(136,136,136,.15)"; ctx.fillRect(nx, by2, bw2, bh2);
+    ctx.fillStyle = "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillText("◀ 戻る", nx+bw2/2, by2+32);
+  }
+  else if (giftScreen === "sent") {
+    ctx.shadowBlur = 30; ctx.shadowColor = "#ffd700";
+    ctx.fillStyle = "#ffd700"; ctx.font = "bold 34px Arial";
+    ctx.fillText("🎁 送信完了！", W/2, 240);
+    ctx.shadowBlur = 10; ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
+    ctx.fillText(`${giftTargetUser} さんに`, W/2, 290);
+    ctx.fillStyle = "#ffd700"; ctx.font = "bold 20px Arial";
+    const txt = giftSelectedType === "coin" ? `🪙 ${giftSelectedCoin} コイン` : `⚔️ ${weapons[giftSelectedWeapon].name}`;
+    ctx.fillText(txt, W/2, 325);
+    ctx.fillStyle = "#fff"; ctx.font = "14px Arial";
+    ctx.fillText("をプレゼントしました！", W/2, 355);
+    const bw = 200, bh = 50, bx = (W-bw)/2, by = 420;
+    ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = "rgba(0,255,204,.15)"; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = "#00ffcc"; ctx.font = "bold 18px Arial";
+    ctx.fillText("タイトルへ戻る", W/2, by+32);
+  }
+  ctx.restore();
+  ctx.textAlign = "left";
+}
+
+function drawInbox(){
+  if (!inboxScreen) return;
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,10,.95)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.shadowBlur = 25; ctx.shadowColor = "#88ff88";
+  ctx.fillStyle = "#88ff88"; ctx.font = "bold 24px Arial";
+  ctx.fillText("🎁 受信BOX", W/2, 40);
+  ctx.fillStyle = "#fff"; ctx.font = "12px Arial"; ctx.shadowBlur = 0;
+  ctx.fillText(`あなた宛てのギフト: ${saveData.giftInbox.length} 件`, W/2, 62);
+  const LT = 90, IH = 90, GAP = 10;
+  for (let i = 0; i < saveData.giftInbox.length; i++) {
+    const g = saveData.giftInbox[i];
+    const y = LT + i*(IH+GAP) - inboxScroll;
+    if (y+IH < LT || y > H-100) continue;
+    ctx.shadowBlur = 15; ctx.shadowColor = "#ffd700"; ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 2;
+    ctx.strokeRect(24, y, W-48, IH);
+    ctx.fillStyle = "rgba(255,215,0,.06)"; ctx.fillRect(24, y, W-48, IH);
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
+    ctx.fillText(`From: ${g.from}`, 40, y+24);
+    ctx.fillStyle = "#fff"; ctx.font = "bold 15px Arial";
+    const txt = g.type === "coin" ? `🪙 ${g.value} コイン` : `⚔️ ${weapons[g.value] ? weapons[g.value].name : g.value}`;
+    ctx.fillText(txt, 40, y+48);
+    ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.font = "12px Arial";
+    ctx.fillText(g.message, 40, y+70);
+    ctx.textAlign = "center";
+  }
+  const bby = H-45, bbw = 200, bbx = (W-bbw)/2;
+  ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
+  ctx.strokeRect(bbx, bby-22, bbw, 44);
+  ctx.fillStyle = "rgba(0,255,204,.15)"; ctx.fillRect(bbx, bby-22, bbw, 44);
+  ctx.fillStyle = "#00ffcc"; ctx.font = "bold 18px Arial";
+  ctx.fillText("◀ 戻る", W/2, bby+7);
+  ctx.restore();
+  ctx.textAlign = "left";
+}
+
+/* ========== タイトルへ組み込み ========== */
+const _origDrawTitle = window.drawTitle;
+window.drawTitle = function(){
+  if (needsNameInput() && !nameInputActive) openNameInput();
+  if (nameInputActive) { drawNameInput(); return; }
+  _origDrawTitle();
+  drawGiftButton();
+  drawGiftReceivePopup();
+};
+
+/* ★ 丸ボタン描画（右上・設定ボタンの下） */
+function drawGiftButton(){
+  if (showDailyBonusPopup) return;
+  ctx.save();
+  ctx.textAlign = "center";
+  const cx = TITLE_GIFT_BTN_X, cy = TITLE_GIFT_BTN_Y, r = TITLE_GIFT_BTN_R;
+  const hue = (Date.now()*0.2)%360;
+  ctx.shadowBlur = 25; ctx.shadowColor = `hsl(${hue},100%,60%)`;
+  ctx.fillStyle = "rgba(0,20,30,.7)";
+  ctx.strokeStyle = `hsl(${hue},100%,60%)`;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.font = "bold 22px Arial";
+  ctx.fillStyle = `hsl(${hue},100%,70%)`;
+  ctx.fillText("🎁", cx, cy + 1);
+  ctx.restore();
+  ctx.textAlign = "left";
+}
+
+/* 描画フック */
+const _origDraw = window.draw;
+window.draw = function(){
+  if (giftScreen !== "none") { drawBackground(); drawGiftScreen(); return; }
+  if (inboxScreen) { drawBackground(); drawInbox(); return; }
+  _origDraw();
+};
+
+/* ========== 入力フック ========== */
+const _origStart = startPointer;
+function giftStart(e){
+  if (e.target === nameEl) return;
+  if (nameInputActive) {
+    e.stopImmediatePropagation(); e.preventDefault();
+    const p = getPointerPosition(e);
+    const cbw = 220, cbh = 54, cbx = (W-cbw)/2, cby = 400;
+    if (p.x >= cbx && p.x <= cbx+cbw && p.y >= cby && p.y <= cby+cbh) {
+      initAudio(); sfx.tap(); confirmNameInput();
+    }
+    return;
+  }
+  if (giftScreen === "none" && !inboxScreen && titleScreen && !showDailyBonusPopup && !abortPopup && !settingsScreen) {
+    const p = getPointerPosition(e);
+    const dx = p.x - TITLE_GIFT_BTN_X;
+    const dy = p.y - TITLE_GIFT_BTN_Y;
+    if (dx*dx + dy*dy <= TITLE_GIFT_BTN_R*TITLE_GIFT_BTN_R) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      initAudio(); openGiftMenu();
+      return;
+    }
+  }
+  if (giftScreen !== "none" || inboxScreen) {
+    e.stopImmediatePropagation(); e.preventDefault();
+    initAudio();
+    const p = getPointerPosition(e);
+    if (inboxScreen) {
+      const bby = H-45, bbw = 200, bbx = (W-bbw)/2;
+      if (p.x >= bbx && p.x <= bbx+bbw && p.y >= bby-22 && p.y <= bby+22) { sfx.tap(); inboxScreen = false; }
+      return;
+    }
+    if (giftScreen === "menu") {
+      const bw = 300, bh = 60, bx = (W-bw)/2;
+      const items = [
+        { y: 180, action: () => { giftSelectedType = "coin"; giftScreen = "coin"; sfx.tap(); } },
+        { y: 260, action: () => { giftSelectedType = "weapon"; giftScreen = "weapon"; sfx.tap(); } },
+        { y: 340, action: () => { receiveGifts(); inboxScreen = true; inboxScroll = 0; sfx.tap(); } },
+        { y: 440, action: closeGift }
+      ];
+      for (const it of items) {
+        if (p.x >= bx && p.x <= bx+bw && p.y >= it.y && p.y <= it.y+bh) { it.action(); return; }
+      }
+      return;
+    }
+    if (giftScreen === "coin") {
+      const bw = 140, bh = 50, gap = 12;
+      for (let i = 0; i < GIFT_COIN_PRESETS.length; i++) {
+        const c = i % 2, r = Math.floor(i/2);
+        const x = (W - (bw*2+gap))/2 + c*(bw+gap);
+        const y = 200 + r*(bh+gap);
+        if (p.x >= x && p.x <= x+bw && p.y >= y && p.y <= y+bh) {
+          const v = GIFT_COIN_PRESETS[i];
+          if (saveData.coins >= v) { giftSelectedCoin = v; sfx.tap(); }
+          return;
+        }
+      }
+      const sx = 60, sw = W-120, sy = 400;
+      if (p.x >= sx && p.x <= sx+sw && p.y >= sy-20 && p.y <= sy+20) {
+        giftSelectedCoin = Math.max(1, Math.round((p.x - sx)/sw*1000));
+        return;
+      }
+      const bw2 = 140, bh2 = 50, by2 = 470;
+      const yx = W/2 - bw2 - 8, nx = W/2 + 8;
+      const canGo = saveData.coins >= giftSelectedCoin && giftSelectedCoin > 0;
+      if (p.x >= yx && p.x <= yx+bw2 && p.y >= by2 && p.y <= by2+bh2) { if (canGo) { giftScreen = "target"; sfx.tap(); } return; }
+      if (p.x >= nx && p.x <= nx+bw2 && p.y >= by2 && p.y <= by2+bh2) { giftScreen = "menu"; sfx.tap(); return; }
+      return;
+    }
+    if (giftScreen === "weapon") {
+      const list = saveData.ownedWeapons.slice();
+      const unique = [...new Set(list)];
+      const LT = 170, IH = 56, GAP = 8;
+      for (let i = 0; i < unique.length; i++) {
+        const k = unique[i];
+        const cnt = list.filter(x => x === k).length;
+        const y = LT + i*(IH+GAP) - giftWeaponScroll;
+        if (p.x >= 24 && p.x <= W-24 && p.y >= y && p.y <= y+IH) {
+          if (cnt > 1) { giftSelectedWeapon = k; sfx.tap(); }
+          return;
+        }
+      }
+      const bw2 = 140, bh2 = 50, by2 = H-70;
+      const yx = W/2 - bw2 - 8, nx = W/2 + 8;
+      const canGo = giftSelectedWeapon && saveData.ownedWeapons.filter(k => k === giftSelectedWeapon).length > 1;
+      if (p.x >= yx && p.x <= yx+bw2 && p.y >= by2 && p.y <= by2+bh2) { if (canGo) { giftScreen = "target"; sfx.tap(); } return; }
+      if (p.x >= nx && p.x <= nx+bw2 && p.y >= by2 && p.y <= by2+bh2) { giftScreen = "menu"; sfx.tap(); return; }
+      return;
+    }
+    if (giftScreen === "target") {
+      const bw2 = 140, bh2 = 50, by2 = 320;
+      const yx = W/2 - bw2 - 8, nx = W/2 + 8;
+      const canGo = giftTargetUser.trim().length > 0;
+      if (p.x >= yx && p.x <= yx+bw2 && p.y >= by2 && p.y <= by2+bh2) { if (canGo) { giftScreen = "message"; sfx.tap(); } return; }
+      if (p.x >= nx && p.x <= nx+bw2 && p.y >= by2 && p.y <= by2+bh2) { giftScreen = "menu"; sfx.tap(); return; }
+      return;
+    }
+    if (giftScreen === "message") {
+      const bw2 = 140, bh2 = 50, by2 = 430;
+      const yx = W/2 - bw2 - 8, nx = W/2 + 8;
+      const canGo = giftMessage.trim().length > 0;
+      if (p.x >= yx && p.x <= yx+bw2 && p.y >= by2 && p.y <= by2+bh2) { if (canGo) sendGift(); return; }
+      if (p.x >= nx && p.x <= nx+bw2 && p.y >= by2 && p.y <= by2+bh2) { giftScreen = "target"; sfx.tap(); return; }
+      return;
+    }
+    if (giftScreen === "sent") {
+      const bw = 200, bh = 50, bx = (W-bw)/2, by = 420;
+      if (p.x >= bx && p.x <= bx+bw && p.y >= by && p.y <= by+bh) { giftScreen = "none"; sfx.tap(); }
+      return;
+    }
+  }
+  _origStart(e);
+}
+canvas.addEventListener("touchstart", giftStart, { passive:false, capture:true });
+canvas.addEventListener("mousedown", giftStart, { capture:true });
+canvas.removeEventListener("touchstart", startPointer);
+canvas.removeEventListener("mousedown", startPointer);
+
+/* 名前入力のキーボード処理を元ハンドラより先に処理 */
+window.addEventListener("keydown", (e) => {
+  if (nameInputActive) {
+    e.stopImmediatePropagation();
+    return;
+  }
+  if (giftScreen === "target" || giftScreen === "message") {
+    e.stopImmediatePropagation();
+    if (e.key === "Enter") {
+      if (giftScreen === "target" && giftTargetUser.trim().length > 0) { giftScreen = "message"; sfx.tap(); }
+      else if (giftScreen === "message" && giftMessage.trim().length > 0) sendGift();
+    } else if (e.key === "Escape") {
+      giftScreen = giftScreen === "target" ? "menu" : "target";
+    } else if (e.key === "Backspace") {
+      if (giftScreen === "target") giftTargetUser = giftTargetUser.slice(0, -1);
+      else giftMessage = giftMessage.slice(0, -1);
+    } else if (e.key.length === 1 && giftScreen === "target" && giftTargetUser.length < 12) {
+      giftTargetUser += e.key;
+    } else if (e.key.length === 1 && giftScreen === "message" && giftMessage.length < 80) {
+      giftMessage += e.key;
+    }
+    return;
+  }
+}, true);
+
+/* 起動時に受信 */
+setTimeout(receiveGifts, 600);
+
+})();
+</script>
+
 </body>
 </html>
-
