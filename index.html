@@ -195,7 +195,7 @@ function bgmScheduler() {
     if (bgmCurrentStep >= 128) bgmCurrentStep = 0;
   }
 }
-function startBGM() {
+function startSynthBGM() {
   if (!audioCtx) return;
   ensureGains();
   if (bgmSchedulerId) clearInterval(bgmSchedulerId);
@@ -203,9 +203,50 @@ function startBGM() {
   bgmCurrentStep = 0;
   bgmSchedulerId = setInterval(bgmScheduler, 25);
 }
-function setBGMEnabled(v) { bgmEnabled = v; if (bgmGain) bgmGain.gain.value = bgmEnabled ? bgmVolume : 0; }
+/* MP3 BGM (index.html と同じフォルダの Attack.mp3 を再生) */
+const BGM_FILE = "Attack.mp3";
+let bgmAudio = null, bgmMp3Failed = false;
+function applyMp3Volume() { if (bgmAudio) bgmAudio.volume = bgmEnabled ? Math.max(0, Math.min(1, bgmVolume)) : 0; }
+function bgmStatus(msg, ok) {
+  try {
+    let d = document.getElementById("bgmStatus");
+    if (!d) {
+      d = document.createElement("div"); d.id = "bgmStatus";
+      d.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99999;max-width:90vw;padding:6px 10px;border-radius:6px;font:12px/1.4 sans-serif;color:#fff;pointer-events:none;";
+      document.body.appendChild(d);
+    }
+    d.style.background = ok ? "rgba(0,120,60,.9)" : "rgba(180,40,40,.92)";
+    d.textContent = msg; d.style.display = "block";
+    clearTimeout(d._t); d._t = setTimeout(() => { d.style.display = "none"; }, ok ? 3000 : 12000);
+  } catch (e) {}
+}
+function startBGM() {
+  if (!audioCtx) return;
+  ensureGains();
+  if (bgmMp3Failed) { startSynthBGM(); return; }
+  if (!bgmAudio) {
+    bgmAudio = new Audio(BGM_FILE);
+    bgmAudio.loop = true;
+    bgmAudio.preload = "auto";
+    bgmAudio.addEventListener("playing", () => bgmStatus("BGM: Attack.mp3 再生中", true));
+    bgmAudio.addEventListener("error", () => {
+      const c = bgmAudio && bgmAudio.error ? bgmAudio.error.code : "?";
+      bgmStatus("Attack.mp3 を読み込めません(code " + c + " / " + location.protocol + ")。index.html と同じ場所にあるか確認 → 内蔵BGMで再生中", false);
+      bgmMp3Failed = true; bgmAudio = null; startSynthBGM();
+    });
+  }
+  applyMp3Volume();
+  const p = bgmAudio.play();
+  if (p && p.catch) p.catch((err) => {
+    bgmStatus("再生がブロックされました(" + (err && err.name) + ")。もう一度タップしてください", false);
+    const retry = () => { if (bgmAudio) bgmAudio.play().catch(()=>{}); window.removeEventListener("pointerdown", retry, true); window.removeEventListener("keydown", retry, true); };
+    window.addEventListener("pointerdown", retry, true);
+    window.addEventListener("keydown", retry, true);
+  });
+}
+function setBGMEnabled(v) { bgmEnabled = v; if (bgmGain) bgmGain.gain.value = bgmEnabled ? bgmVolume : 0; applyMp3Volume(); }
 function setSEEnabled(v) { seEnabled = v; if (seGain) seGain.gain.value = seEnabled ? seVolume : 0; }
-function setBGMVolume(v) { bgmVolume = Math.max(0, Math.min(1, v)); if (bgmGain && bgmEnabled) bgmGain.gain.value = bgmVolume; }
+function setBGMVolume(v) { bgmVolume = Math.max(0, Math.min(1, v)); if (bgmGain && bgmEnabled) bgmGain.gain.value = bgmVolume; applyMp3Volume(); }
 function setSEVolume(v) { seVolume = Math.max(0, Math.min(1, v)); if (seGain && seEnabled) seGain.gain.value = seVolume; }
 
 /* ========== 基本 ========== */
