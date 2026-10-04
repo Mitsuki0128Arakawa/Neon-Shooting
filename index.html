@@ -201,7 +201,7 @@ function startSynthBGM() {
   if (bgmSchedulerId) clearInterval(bgmSchedulerId);
   bgmNextStepTime = audioCtx.currentTime + 0.05;
   bgmCurrentStep = 0;
-  bgmSchedulerId = setInterval(bgmScheduler, 25);
+  bgmSchedulerId = setInterval(bgmScheduler, 50);
 }
 /* MP3 BGM (index.html と同じフォルダの Attack.mp3 を再生) */
 const BGM_FILE = "Attack.mp3";
@@ -1000,6 +1000,9 @@ function startGameWithCurrentSelection() {
   shake(25); flash(specials[selectedSpecial].color, 10); chroma(10);
   saveData.totalPlays = (saveData.totalPlays || 0) + 1;
   writeSave();
+  /* 通常ゲーム開始時は通常BGMへ */
+  if (typeof stopBossBGM === "function") { if (bossAudio) bossAudio.pause(); }
+  if (audioCtx && bgmAudio) { bgmAudio.play().catch(()=>{}); }
 }
 function startFusionGame() {
   if (fusionSelected.length < 2) return;
@@ -1043,6 +1046,8 @@ function startStudyMode(grade) {
   shake(25); flash("#66ccff", 10); chroma(10);
   saveData.totalPlays = (saveData.totalPlays || 0) + 1;
   writeSave();
+  if (typeof stopBossBGM === "function") { if (bossAudio) bossAudio.pause(); }
+  if (audioCtx && bgmAudio) { bgmAudio.play().catch(()=>{}); }
 }
 
 /* ========== BOSS BATTLE MODE ========== */
@@ -1057,7 +1062,7 @@ function openBossSelect() {
   bossMode = true; bossSelected = [];
   titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0;
 }
-function exitBossSelect() { bossMode = false; bossSelected = []; weaponMenu = false; titleScreen = true; menuScrollY = 0; }
+function exitBossSelect() { bossMode = false; bossSelected = []; weaponMenu = false; titleScreen = true; menuScrollY = 0; if (typeof stopBossBGM === "function") stopBossBGM(); }
 function startBossBattleFromMenu() {
   if (bossSelected.length !== 3) return;
   sfx.tap();
@@ -1972,8 +1977,15 @@ function enemyBulletSpeedScale() {
 }
 
 /* ========== 敵生成 ========== */
+const ENEMY_MAX = 30;
 function spawnEnemy(forceType) {
   if (bossMode) return;
+  // ボス以外の敵が30体以上いる場合は追加しない
+  if (forceType !== "boss") {
+    let cnt = 0;
+    for (let i = 0; i < enemies.length; i++) if (enemies[i].type !== "boss") cnt++;
+    if (cnt >= ENEMY_MAX) return;
+  }
   const roll = forceType ? 0 : Math.random();
   const hs = enemyHpScale(), ss = enemySpeedScale(), sh = enemyShootScale();
   let e;
@@ -5813,10 +5825,9 @@ let inboxScreen = false;
 let inboxScroll = 0;
 const GIFT_COIN_PRESETS = [50, 100, 300, 500, 1000];
 
-/* ★ プレゼントボタンは右上（設定ボタンの下）に丸ボタンとして配置 */
 const TITLE_GIFT_BTN_R = 24;
-const TITLE_GIFT_BTN_X = W - TITLE_GIFT_BTN_R - 16;   // 設定ボタンと同じX
-const TITLE_GIFT_BTN_Y = 40 + 24 + 24 + 16;           // 設定ボタンの下
+const TITLE_GIFT_BTN_X = W - TITLE_GIFT_BTN_R - 16;
+const TITLE_GIFT_BTN_Y = 40 + 24 + 24 + 16;
 
 function openGiftMenu(){
   giftScreen = "menu";
@@ -6167,7 +6178,6 @@ function drawInbox(){
   ctx.textAlign = "left";
 }
 
-/* ========== タイトルへ組み込み ========== */
 const _origDrawTitle = window.drawTitle;
 window.drawTitle = function(){
   if (needsNameInput() && !nameInputActive) openNameInput();
@@ -6177,7 +6187,6 @@ window.drawTitle = function(){
   drawGiftReceivePopup();
 };
 
-/* ★ 丸ボタン描画（右上・設定ボタンの下） */
 function drawGiftButton(){
   if (showDailyBonusPopup) return;
   ctx.save();
@@ -6197,7 +6206,6 @@ function drawGiftButton(){
   ctx.textAlign = "left";
 }
 
-/* 描画フック */
 const _origDraw = window.draw;
 window.draw = function(){
   if (giftScreen !== "none") { drawBackground(); drawGiftScreen(); return; }
@@ -6205,7 +6213,6 @@ window.draw = function(){
   _origDraw();
 };
 
-/* ========== 入力フック ========== */
 const _origStart = startPointer;
 function giftStart(e){
   if (e.target === nameEl) return;
@@ -6323,7 +6330,6 @@ canvas.addEventListener("mousedown", giftStart, { capture:true });
 canvas.removeEventListener("touchstart", startPointer);
 canvas.removeEventListener("mousedown", startPointer);
 
-/* 名前入力のキーボード処理を元ハンドラより先に処理 */
 window.addEventListener("keydown", (e) => {
   if (nameInputActive) {
     e.stopImmediatePropagation();
@@ -6348,9 +6354,203 @@ window.addEventListener("keydown", (e) => {
   }
 }, true);
 
-/* 起動時に受信 */
 setTimeout(receiveGifts, 600);
 
+})();
+</script>
+
+<!-- ===== NEON PATCH 3: 軽量化 / 敵30体制限 / バックグラウンド対応 ===== -->
+<script>
+(function(){
+"use strict";
+
+/* =========================================================
+   1. 敵の最大数を30体に制限
+   ========================================================= */
+const ENEMY_MAX = 30;
+const _spawnEnemy = window.spawnEnemy;
+window.spawnEnemy = function(forceType){
+  if (forceType === "boss") return _spawnEnemy(forceType);
+  let count = 0;
+  for (let i = 0; i < enemies.length; i++) if (enemies[i].type !== "boss") count++;
+  if (count >= ENEMY_MAX) return;
+  _spawnEnemy(forceType);
+};
+
+/* =========================================================
+   2. パーティクル / 弾 / 敵弾 の上限を厳格化
+   ========================================================= */
+const PARTICLE_MAX = 320;
+const ENEMY_BULLET_MAX = 700;
+const PLAYER_BULLET_MAX = 500;
+const DAMAGE_NUM_MAX = 24;
+const SHOCKWAVE_MAX = 24;
+
+const _burst = window.burst;
+window.burst = function(x, y, count, color){
+  const room = PARTICLE_MAX - particles.length;
+  if (room <= 0) return;
+  _burst(x, y, Math.min(count, room), color);
+};
+
+setInterval(function(){
+  if (damageNumbers.length > DAMAGE_NUM_MAX) {
+    damageNumbers.splice(0, damageNumbers.length - DAMAGE_NUM_MAX);
+  }
+  if (shockwaves.length > SHOCKWAVE_MAX) {
+    shockwaves.splice(0, shockwaves.length - SHOCKWAVE_MAX);
+  }
+  if (particles.length > PARTICLE_MAX) {
+    particles.splice(0, particles.length - PARTICLE_MAX);
+  }
+  if (enemyBullets.length > ENEMY_BULLET_MAX) {
+    enemyBullets.splice(0, enemyBullets.length - ENEMY_BULLET_MAX);
+  }
+  if (bullets.length > PLAYER_BULLET_MAX) {
+    bullets.splice(0, bullets.length - PLAYER_BULLET_MAX);
+  }
+}, 250);
+
+const _eb = window.eb;
+window.eb = function(){
+  if (enemyBullets.length >= ENEMY_BULLET_MAX) return;
+  _eb.apply(this, arguments);
+};
+
+const _addBullet = window.addBullet;
+window.addBullet = function(d){
+  if (bullets.length >= PLAYER_BULLET_MAX) {
+    bullets.shift();
+  }
+  _addBullet(d);
+};
+
+const _fireEnemyBullet = window.fireEnemyBullet;
+window.fireEnemyBullet = function(e){
+  if (enemyBullets.length >= ENEMY_BULLET_MAX) return;
+  _fireEnemyBullet(e);
+};
+
+/* =========================================================
+   3. 描画の間引き
+   ========================================================= */
+const _drawEffects = window.drawEffects;
+window.drawEffects = function(){
+  if (particles.length > 120) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      if (p.x < -20 || p.x > W + 20 || p.y < -20 || p.y > H + 20 || p.life <= 0) {
+        particles.splice(i, 1);
+      }
+    }
+  }
+  _drawEffects();
+};
+
+const _drawBullet = window.drawBullet;
+window.drawBullet = function(b){
+  if (b.x < -60 || b.x > W + 60 || b.y < -60 || b.y > H + 60) return;
+  _drawBullet(b);
+};
+
+/* =========================================================
+   4. BGM スケジューラの負荷軽減
+   ========================================================= */
+if (typeof bgmSchedulerId !== "undefined" && bgmSchedulerId) {
+  clearInterval(bgmSchedulerId);
+  bgmSchedulerId = setInterval(bgmScheduler, 50);
+}
+
+/* =========================================================
+   5. 画面消灯時も動作継続（Wake Lock + 可視性対策）
+   ========================================================= */
+let wakeLock = null;
+async function requestWakeLock(){
+  try {
+    if ("wakeLock" in navigator && document.visibilityState === "visible") {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    }
+  } catch (e) {}
+}
+window.addEventListener("pointerdown", function once(){
+  requestWakeLock();
+  window.removeEventListener("pointerdown", once, true);
+}, true);
+window.addEventListener("keydown", function once(){
+  requestWakeLock();
+  window.removeEventListener("keydown", once, true);
+}, true);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") requestWakeLock();
+});
+
+let bgInterval = null;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    if (bgInterval) return;
+    bgInterval = setInterval(function(){
+      try {
+        if (typeof pauseScreen !== "undefined" && pauseScreen) return;
+        if (typeof titleScreen !== "undefined" && titleScreen) return;
+        if (typeof gameOver !== "undefined" && gameOver) return;
+        if (typeof time !== "undefined") time++;
+        if (typeof bgmAudio !== "undefined" && bgmAudio && bgmAudio.paused && bgmEnabled) {
+          bgmAudio.play().catch(()=>{});
+        }
+        if (typeof bossAudio !== "undefined" && bossAudio && bossAudio.paused && bossMode) {
+          bossAudio.play().catch(()=>{});
+        }
+      } catch (e) {}
+    }, 100);
+  } else {
+    if (bgInterval) { clearInterval(bgInterval); bgInterval = null; }
+  }
+});
+
+let lastVisible = Date.now();
+document.addEventListener("visibilitychange", () => {
+  const now = Date.now();
+  if (document.visibilityState === "visible") {
+    const away = (now - lastVisible) / 1000;
+    if (away > 10 && typeof time !== "undefined") {
+      /* 何もしない（自然に戻る） */
+    }
+  }
+  lastVisible = now;
+});
+
+/* =========================================================
+   6. オーディオの負荷軽減（同時発音数を制限）
+   ========================================================= */
+let activeVoices = 0;
+const VOICE_MAX = 12;
+const _playTone = window.playTone;
+window.playTone = function(o){
+  if (activeVoices >= VOICE_MAX) return;
+  activeVoices++;
+  try { _playTone(o); } catch (e) {}
+  setTimeout(() => { activeVoices = Math.max(0, activeVoices - 1); }, (o && o.dur ? o.dur * 1000 : 100) + 30);
+};
+const _playNoise = window.playNoise;
+window.playNoise = function(o){
+  if (activeVoices >= VOICE_MAX) return;
+  activeVoices++;
+  try { _playNoise(o); } catch (e) {}
+  setTimeout(() => { activeVoices = Math.max(0, activeVoices - 1); }, (o && o.dur ? o.dur * 1000 : 100) + 30);
+};
+
+/* =========================================================
+   7. wheel イベントのスロットル
+   ========================================================= */
+let wheelLock = false;
+canvas.addEventListener("wheel", function(e){
+  if (wheelLock) { e.preventDefault(); return; }
+  wheelLock = true;
+  setTimeout(() => { wheelLock = false; }, 16);
+}, { passive:false, capture:true });
+
+console.log("[NEON PATCH 3] 軽量化 / 敵30体制限 / バックグラウンド対応 適用完了");
 })();
 </script>
 
