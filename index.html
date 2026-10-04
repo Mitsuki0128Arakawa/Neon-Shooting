@@ -206,20 +206,7 @@ function startSynthBGM() {
 /* MP3 BGM (index.html と同じフォルダの Attack.mp3 を再生) */
 const BGM_FILE = "Attack.mp3";
 let bgmAudio = null, bgmMp3Failed = false;
-function applyMp3Volume() { if (bgmAudio) bgmAudio.volume = bgmEnabled ? Math.max(0, Math.min(1, bgmVolume)) : 0; }
-function bgmStatus(msg, ok) {
-  try {
-    let d = document.getElementById("bgmStatus");
-    if (!d) {
-      d = document.createElement("div"); d.id = "bgmStatus";
-      d.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99999;max-width:90vw;padding:6px 10px;border-radius:6px;font:12px/1.4 sans-serif;color:#fff;pointer-events:none;";
-      document.body.appendChild(d);
-    }
-    d.style.background = ok ? "rgba(0,120,60,.9)" : "rgba(180,40,40,.92)";
-    d.textContent = msg; d.style.display = "block";
-    clearTimeout(d._t); d._t = setTimeout(() => { d.style.display = "none"; }, ok ? 3000 : 12000);
-  } catch (e) {}
-}
+function applyMp3Volume() { const v = bgmEnabled ? Math.max(0, Math.min(1, bgmVolume)) : 0; if (bgmAudio) bgmAudio.volume = v; if (typeof bossAudio !== "undefined" && bossAudio) bossAudio.volume = v; }
 function startBGM() {
   if (!audioCtx) return;
   ensureGains();
@@ -228,17 +215,12 @@ function startBGM() {
     bgmAudio = new Audio(BGM_FILE);
     bgmAudio.loop = true;
     bgmAudio.preload = "auto";
-    bgmAudio.addEventListener("playing", () => bgmStatus("BGM: Attack.mp3 再生中", true));
-    bgmAudio.addEventListener("error", () => {
-      const c = bgmAudio && bgmAudio.error ? bgmAudio.error.code : "?";
-      bgmStatus("Attack.mp3 を読み込めません(code " + c + " / " + location.protocol + ")。index.html と同じ場所にあるか確認 → 内蔵BGMで再生中", false);
-      bgmMp3Failed = true; bgmAudio = null; startSynthBGM();
-    });
+    bgmAudio.addEventListener("error", () => { bgmMp3Failed = true; bgmAudio = null; startSynthBGM(); });
   }
   applyMp3Volume();
   const p = bgmAudio.play();
-  if (p && p.catch) p.catch((err) => {
-    bgmStatus("再生がブロックされました(" + (err && err.name) + ")。もう一度タップしてください", false);
+  if (p && p.catch) p.catch(() => {
+    /* 自動再生ブロック時は次のタップで再試行 */
     const retry = () => { if (bgmAudio) bgmAudio.play().catch(()=>{}); window.removeEventListener("pointerdown", retry, true); window.removeEventListener("keydown", retry, true); };
     window.addEventListener("pointerdown", retry, true);
     window.addEventListener("keydown", retry, true);
@@ -248,6 +230,22 @@ function setBGMEnabled(v) { bgmEnabled = v; if (bgmGain) bgmGain.gain.value = bg
 function setSEEnabled(v) { seEnabled = v; if (seGain) seGain.gain.value = seEnabled ? seVolume : 0; }
 function setBGMVolume(v) { bgmVolume = Math.max(0, Math.min(1, v)); if (bgmGain && bgmEnabled) bgmGain.gain.value = bgmVolume; applyMp3Volume(); }
 function setSEVolume(v) { seVolume = Math.max(0, Math.min(1, v)); if (seGain && seEnabled) seGain.gain.value = seVolume; }
+
+/* ボス戦BGM (index.html と同じフォルダに置く) */
+const BOSS_BGM_FILE = "ミッドナイトブレイカー_D__minor__bpm_82.mp3";
+let bossAudio = null;
+function startBossBGM() {
+  if (bgmAudio) bgmAudio.pause();
+  if (bgmSchedulerId) { clearInterval(bgmSchedulerId); bgmSchedulerId = null; }
+  if (!bossAudio) {
+    bossAudio = new Audio(encodeURI(BOSS_BGM_FILE)); bossAudio.loop = true; bossAudio.preload = "auto";
+    bossAudio.addEventListener("error", () => { bossAudio = null; if (bossMode && audioCtx) startBGM(); });
+  }
+  try { bossAudio.currentTime = 0; } catch (e) {}
+  applyMp3Volume();
+  const p = bossAudio.play(); if (p && p.catch) p.catch(() => {});
+}
+function stopBossBGM() { if (bossAudio) bossAudio.pause(); if (audioCtx) startBGM(); }
 
 /* ========== 基本 ========== */
 const canvas = document.getElementById("game");
@@ -572,6 +570,8 @@ function answerStudyQuiz(idx) {
 /* ========== 主要状態 ========== */
 let bossKillCount = 0;
 const BOSS_KILL_TARGET = 2;
+let bossMode = false, bossSelected = [], bossSelMsg = 0;
+let bossForm = 1, bossFormT = 0, bossInvT = 0, bossPat = null, bossPatI = -1, bossPatT = 0, bossDrop = 0, bossBeatLast = -1;
 let gameClear = false;
 let fusionMode = false, fusionSelected = [], activeWeapons = [], quickMode = false;
 let weaponCools = {};
@@ -933,9 +933,10 @@ function p_inSpecialBtn(px, py) { const dx = px-SPECIAL_BTN_X, dy = py-SPECIAL_B
 function p_inPauseBtn(px, py) { const dx = px-PAUSE_BTN_X, dy = py-PAUSE_BTN_Y; return dx*dx+dy*dy <= PAUSE_BTN_R*PAUSE_BTN_R; }
 function p_inMuteBtn(px, py) { const dx = px-MUTE_BTN_X, dy = py-MUTE_BTN_Y; return dx*dx+dy*dy <= MUTE_BTN_R*MUTE_BTN_R; }
 const TITLE_MODES_Y = 235, TITLE_MODE_W = 110, TITLE_MODE_H = 48, TITLE_MODE_XS = [60,190,320];
-const TITLE_PLAY_Y = 300, TITLE_PLAY_W = 360, TITLE_PLAY_H = 45;
-const TITLE_FUSION_Y = 355, TITLE_FUSION_W = 360, TITLE_FUSION_H = 45;
-const TITLE_QUICK_Y = 410, TITLE_QUICK_W = 360, TITLE_QUICK_H = 45;
+const TITLE_PLAY_Y = 290, TITLE_PLAY_W = 360, TITLE_PLAY_H = 38;
+const TITLE_FUSION_Y = 333, TITLE_FUSION_W = 360, TITLE_FUSION_H = 38;
+const TITLE_QUICK_Y = 376, TITLE_QUICK_W = 360, TITLE_QUICK_H = 38;
+const TITLE_BOSS_Y = 419, TITLE_BOSS_W = 360, TITLE_BOSS_H = 38;
 const TITLE_GRID_Y = 465, TITLE_GRID_H = 50, TITLE_GRID_GAP = 8;
 const TITLE_GRID_W = (TITLE_PLAY_W - TITLE_GRID_GAP)/2;
 const TITLE_GRID_X1 = (W - TITLE_PLAY_W)/2;
@@ -1043,6 +1044,162 @@ function startStudyMode(grade) {
   saveData.totalPlays = (saveData.totalPlays || 0) + 1;
   writeSave();
 }
+
+/* ========== BOSS BATTLE MODE ========== */
+const BOSS_FORMS = [null,
+  { name:"FORM 1 : NEON SENTINEL", hp:2400, color:"#00ffcc" },
+  { name:"FORM 2 : CRIMSON ARCHITECT", hp:3200, color:"#ff0044" },
+  { name:"FORM 3 : OMEGA BREAKER", hp:4000, color:"#ff00ff" }
+];
+function openBossSelect() {
+  studyMode = false; fusionMode = false; quickMode = false; fusionSelected = [];
+  applyChallenge(null);
+  bossMode = true; bossSelected = [];
+  titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0;
+}
+function exitBossSelect() { bossMode = false; bossSelected = []; weaponMenu = false; titleScreen = true; menuScrollY = 0; }
+function startBossBattleFromMenu() {
+  if (bossSelected.length !== 3) return;
+  sfx.tap();
+  activeWeapons = bossSelected.slice(); selectedWeapon = activeWeapons[0]; fusionMode = true;
+  weaponMenu = false; specialMenu = false;
+  setupBossBattle();
+}
+function setupBossBattle() {
+  challengeNoSpecials = true;
+  player.maxHp = Math.max(10, Math.floor((50 + getMaxHpBonus())/2)); player.hp = player.maxHp;
+  player.x = W/2; player.y = H-120; player.cool = 0; player.invincible = 60;
+  player.dashTimer = 0; player.dashCooldown = 0;
+  knifeAngle = -Math.PI/2; knifeTouchMode = null; swordAngle = -Math.PI/2;
+  rapidTimer = 0; rapidCooldown = 0; vampireHeal = 0;
+  bullets = []; enemies = []; enemyBullets = []; turrets = []; lightningBolts = [];
+  powerups = []; mines = []; afterImages = []; particles = []; shockwaves = []; damageNumbers = [];
+  specialParticles = []; specialFireworks = [];
+  weaponPower = {}; weaponCools = {};
+  bossKillCount = 0; gameClear = false; gameOver = false; specialGauge = 0; specialActive = 0;
+  theWorldTimer = 0; mudaRushTimer = 0; mudaRushEnemy = null; madeInHeavenTimer = 0;
+  kingCrimsonTimer = 0; stickyFingersTimer = 0; stickyFingersTarget = null;
+  gerTimer = 0; whiteSnakeTimer = 0; determinationActive = 0;
+  boneBarriers = []; gasterBlasters = []; blueAttacks = [];
+  level = 12; exp = 0; nextExp = 999; score = 0; time = 0; difficulty = 1;
+  combo = 0; comboTimer = 0; maxCombo = 0; wave = 1; waveTimer = 0; bossActive = false;
+  resetMissionSession(); missionSession.plays = 1;
+  pauseScreen = false; pauseBackToTitleConfirm = false;
+  bossBeatLast = -1; bossDrop = 0;
+  startBossForm(1);
+  startBossBGM();
+  saveData.totalPlays = (saveData.totalPlays || 0) + 1; writeSave();
+}
+function startBossForm(n) {
+  bossForm = n; const F = BOSS_FORMS[n];
+  let e = enemies.find(q => q.bm);
+  if (!e) { e = { x:W/2, y:-90, r:42, hp:F.hp, maxHp:F.hp, speed:0, type:"boss", score:50, shootRate:0, bossPhase:0, bm:true, tx:W/2 }; enemies.push(e); bossActive = true; }
+  e.hp = e.maxHp = F.hp; e.invuln = true; e.phase2 = n >= 2;
+  bossInvT = n === 1 ? 150 : 120; bossFormT = 0; bossPat = null; bossPatI = -1; bossPatT = 0; bossDrop = 0;
+  enemyBullets = [];
+  level = 12 + (n-1)*3;
+  sfx.bossAppear(); shake(80); flash(F.color, 20); chroma(25);
+  if (n > 1) {
+    for (const k of activeWeapons) weaponPower[k] = (weaponPower[k] || 0) + 1;
+    player.hp = Math.min(player.maxHp, player.hp + Math.ceil(player.maxHp*0.3));
+    showBigDamage(player.x, player.y-40, "POWER UP!", "#ffcc00");
+    burst(e.x, e.y, 100, F.color);
+  }
+}
+function bossFormCleared(e) {
+  score += 1000*bossForm; enemyBullets = [];
+  sfx.bossDie(); shake(100); flash("#ffffff", 20); chroma(25); hitStopAdd(12);
+  burst(e.x, e.y, 120, BOSS_FORMS[bossForm].color); burst(e.x, e.y, 60, "#ffffff");
+  shockwaves.push({ x:e.x, y:e.y, radius:10, maxRadius:700, life:50, color:"255,255,255" });
+  startBossForm(bossForm+1);
+}
+function eb(x, y, a, s, r, h, ex) {
+  if (enemyBullets.length > 2000) return;
+  const b = { x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r, hue: h };
+  if (ex) Object.assign(b, ex);
+  enemyBullets.push(b);
+}
+function ering(x, y, n, off, s, r, h, ex) { for (let i = 0; i < n; i++) eb(x, y, off + i/n*TAU, s, r, h, ex); }
+function eaim(e) { return Math.atan2(player.y-e.y, player.x-e.x); }
+function efan(e, n, sp, s, r, h, ex) { const a = eaim(e); for (let i = 0; i < n; i++) eb(e.x, e.y, a + (i-(n-1)/2)*sp, s, r, h, ex); }
+function rainRow(t, s, h) { const g = 90 + (Math.sin(t/70)+1)/2*(W-180); for (let x = 12; x < W; x += 27) if (Math.abs(x-g) > 58) eb(x, -8, Math.PI/2, s, 5, h); }
+/* 各パターン: n=名前, d=長さ(フレーム), f(e, t, beat, beatIndex) */
+const BOSS_PATS = [null, [
+  { n:"AIM FAN", d:350, f:(e,t,bt,bi) => { if (bt) efan(e, 9 + (bi%2)*4, .2, 3.2, 5, 170); if (t%14 === 0) efan(e, 3, .1, 4.2, 5, 40); } },
+  { n:"SPIRAL", d:350, f:(e,t) => { if (t%3 === 0) for (let k = 0; k < 5; k++) eb(e.x, e.y, t*.11 + k*TAU/5, 2.6, 5, 200 + k*25); } },
+  { n:"RAIN GAP", d:360, f:(e,t) => { if (t%15 === 0) rainRow(t, 2.8, 140); if (t%50 === 0) efan(e, 5, .2, 3.2, 5, 40); } },
+  { n:"BEAT RING", d:350, f:(e,t,bt,bi) => { if (bt) { ering(e.x, e.y, 30, (bi%2)*.1, 2.3, 6, 300); ering(e.x, e.y, 30, .05+(bi%2)*.1, 3.1, 5, 200); if (bi%4 === 3) efan(e, 7, .12, 3.8, 6, 40); } } },
+  { n:"TWIN SPIRAL", d:380, f:(e,t) => { if (t%3 === 0) for (let k = 0; k < 3; k++) { eb(e.x, e.y, t*.1 + k*TAU/3, 2.5, 5, 170); eb(e.x, e.y, -t*.1 + k*TAU/3, 2.5, 5, 320); } } },
+  { n:"CURVE", d:360, f:(e,t) => { if (t%18 === 0) { ering(e.x, e.y, 22, t*.05, 2.4, 5, 60, { w:.012 }); ering(e.x, e.y, 22, t*.05, 2.4, 5, 200, { w:-.012 }); } } }
+], [
+  { n:"NEEDLES", d:340, f:(e,t,bt) => { if (t%4 === 0) efan(e, 5, .09, 5, 4, 350); if (bt) ering(e.x, e.y, 24, 0, 2, 5, 20); } },
+  { n:"CROSS SPIRAL", d:380, f:(e,t) => { if (t%4 === 0) for (let k = 0; k < 6; k++) eb(e.x, e.y, t*.09*(k%2 ? -1 : 1) + k*TAU/6, 2.2, 5, 350 + k*10, { ac:1.012, vm:4 }); } },
+  { n:"SPLIT", d:360, f:(e,t) => { if (t%36 === 0) efan(e, 5, .3, 1.8, 9, 30, { sp:{ t:50, n:14, s:2.4, h:60 } }); } },
+  { n:"STOP & GO", d:380, f:(e,t) => { if (t%55 === 0) ering(e.x, e.y, 36, t*.02, 3, 5, 200, { st:22, ho:45, gs:3.2 }); } },
+  { n:"SWEEP CURTAIN", d:360, f:(e,t,bt) => { e.tx = W*.1 + (t/360)*W*.8; if (t%2 === 0) eb(e.x, e.y, Math.PI/2 + (Math.random()-.5)*.3, 3.2, 5, 100); if (bt) efan(e, 9, .2, 3, 6, 350); } },
+  { n:"FLOWER", d:360, f:(e,t) => { if (t%22 === 0) for (let i = 0; i < 60; i++) { const th = i/60*TAU; eb(e.x, e.y, th + t*.03, 1.5 + 1.3*Math.abs(Math.cos(3*th)), 5, 300 + i*2); } } },
+  { n:"BOUNCE", d:340, f:(e,t) => { if (t%3 === 0) eb(e.x, e.y, Math.PI/2 + Math.sin(t/25)*1.2, 3, 5, 170, { bn:2 }); if (t%40 === 0) ering(e.x, e.y, 16, 0, 2.2, 5, 300); } },
+  { n:"SLAM", d:350, f:(e,t,bt,bi) => { if (bt) { if (bi%2 === 0) { ering(e.x, e.y, 46, 0, 1.9, 7, 350); efan(e, 11, .16, 3.6, 5, 20); } else { ering(e.x, e.y, 32, .15, 2.8, 5, 300); ering(e.x, e.y, 32, .05, 2.1, 5, 200); } } } }
+], [
+  { n:"TRIPLE SPIRAL", d:380, f:(e,t) => { if (t%3 === 0) for (let k = 0; k < 5; k++) eb(e.x, e.y, t*.12 + k*TAU/5, 2.8, 5, 300 + k*20); if (t%14 === 0) efan(e, 3, .12, 4, 6, 60); } },
+  { n:"ENCIRCLE", d:400, f:(e,t) => {
+      if (t%50 === 0) { const gap = Math.random()*TAU; for (let i = 0; i < 44; i++) { const a = i/44*TAU; let d = Math.abs(a-gap)%TAU; if (d > Math.PI) d = TAU-d; if (d < .4) continue; eb(player.x + Math.cos(a)*240, player.y + Math.sin(a)*240, a+Math.PI, 2.2, 5, 190); } }
+      if (t%18 === 0) efan(e, 5, .2, 3, 5, 300); } },
+  { n:"RAIN & FAN", d:380, f:(e,t,bt) => { if (t%13 === 0) rainRow(t, 3.2, 140); if (bt) efan(e, 11, .18, 3.4, 5, 350); } },
+  { n:"FAST DOUBLE", d:380, f:(e,t) => { if (t%2 === 0) { eb(e.x, e.y, t*.15, 3, 5, 170); eb(e.x, e.y, -t*.15 + Math.PI, 3, 5, 300); } if (t%20 === 0) ering(e.x, e.y, 20, 0, 2, 5, 60); } },
+  { n:"CHAIN SPLIT", d:380, f:(e,t) => { if (t%45 === 0) efan(e, 3, .45, 1.6, 10, 30, { sp:{ t:45, n:10, s:2, h:60, r:7, sp2:{ t:40, n:7, s:2.2, h:180 } } }); } },
+  { n:"FINAL SPIRAL", d:420, f:(e,t,bt,bi) => { if (t%3 === 0) for (let k = 0; k < 7; k++) eb(e.x, e.y, t*.07 + k*TAU/7, 2.4, 5, (t*3 + k*40)%360); if (bt) { ering(e.x, e.y, 36, bi*.1, 2, 6, 60); if (bi%2 === 0) efan(e, 9, .16, 4, 6, 350); } } }
+]];
+function updateBossBattle() {
+  const e = enemies.find(q => q.bm); if (!e) return;
+  bossFormT++;
+  e.tx = W/2 + Math.sin(bossFormT*.02)*130;
+  if (e.invuln) { e.hp = e.maxHp; if (--bossInvT <= 0) e.invuln = false; }
+  else {
+    const fr = e.hp/e.maxHp;
+    if ((bossDrop < 1 && fr < .66) || (bossDrop < 2 && fr < .33)) {
+      bossDrop++; powerups.push({ x:e.x, y:e.y+e.r, vy:1.2, r:14, kind:"heal", life:900, bob:0 });
+      showDamage(e.x, e.y+60, "HEAL DROP!", "#00ff66");
+    }
+    const bt = (bossAudio && !bossAudio.paused && bossAudio.currentTime > 0) ? bossAudio.currentTime*82/60 : bossFormT/43.9;
+    const bi = Math.floor(bt), beat = bi !== bossBeatLast; bossBeatLast = bi;
+    const pats = BOSS_PATS[bossForm];
+    if (!bossPat || bossPatT >= bossPat.d) { bossPatI = (bossPatI+1) % pats.length; bossPat = pats[bossPatI]; bossPatT = 0; }
+    bossPat.f(e, bossPatT++, beat, bi);
+  }
+  e.x += (e.tx - e.x)*.05;
+  e.y += (110 + Math.sin(bossFormT*.04)*8 - e.y)*.06;
+}
+function drawBossUI() {
+  const F = BOSS_FORMS[bossForm], e = enemies.find(q => q.bm);
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#222"; ctx.fillRect(20, 20, 200, 16);
+  ctx.fillStyle = player.hp <= 15 ? "#ff3344" : "#00ff66"; ctx.shadowBlur = 15; ctx.shadowColor = ctx.fillStyle;
+  ctx.fillRect(20, 20, 200*Math.max(0, player.hp)/player.maxHp, 16); ctx.shadowBlur = 0;
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.strokeRect(20, 20, 200, 16);
+  ctx.font = "bold 12px Arial"; ctx.fillStyle = F.color; ctx.shadowBlur = 10; ctx.shadowColor = F.color;
+  ctx.fillText(F.name, 20, 58); ctx.shadowBlur = 0;
+  ctx.fillStyle = "#222"; ctx.fillRect(20, 64, 390, 10);
+  if (e) { ctx.fillStyle = e.invuln ? (Math.floor(Date.now()/100)%2 ? "#fff" : F.color) : F.color; ctx.fillRect(20, 64, 390*Math.max(0, e.hp/e.maxHp), 10); }
+  ctx.strokeStyle = "#fff"; ctx.strokeRect(20, 64, 390, 10);
+  ctx.fillStyle = "rgba(255,255,255,.8)"; ctx.font = "bold 12px Arial"; ctx.fillText("♪ " + (bossPat ? bossPat.n : "..."), 20, 92);
+  ctx.font = "11px Arial";
+  activeWeapons.forEach((k, i) => { ctx.fillStyle = weapons[k].color; ctx.fillText(weapons[k].name, 20, 112 + i*15); });
+  const s = Math.floor(time/60);
+  ctx.textAlign = "right"; ctx.fillStyle = "#fff"; ctx.font = "bold 14px Arial";
+  ctx.fillText(`TIME ${Math.floor(s/60)}:${String(s%60).padStart(2, "0")}`, W-20, 40);
+  ctx.textAlign = "left";
+  if (player.dashCooldown > 0) {
+    ctx.fillStyle = "#333"; ctx.fillRect(20, 160, 100, 6);
+    ctx.fillStyle = "#ff3366"; ctx.fillRect(20, 160, 100*(1-player.dashCooldown/(45*getDashCdMult())), 6);
+  } else { ctx.fillStyle = "#00ffcc"; ctx.font = "12px Arial"; ctx.fillText("[SPACE] DASH READY", 20, 168); }
+  if (bossInvT > 0) {
+    ctx.save(); ctx.globalAlpha = Math.min(1, bossInvT/40); ctx.textAlign = "center";
+    ctx.font = "bold 28px Arial"; ctx.fillStyle = F.color; ctx.shadowBlur = 30; ctx.shadowColor = F.color;
+    ctx.fillText(F.name, W/2, H/2-60); ctx.restore();
+  }
+  ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "12px Arial"; ctx.fillText("MOVE: TOUCH / WASD", 20, H-18);
+}
 function showShopMessage(text, color) { shopMessage = { text, color: color||"#00ffcc", timer: 90 }; }
 function rollGacha() {
   if (saveData.coins < 300) { showShopMessage("コインが足りません (必要: 300)", "#ff6666"); shake(10); flash("#ff6666", 4); return; }
@@ -1102,6 +1259,7 @@ function startPointer(e) {
     { const bx = (W-TITLE_PLAY_W)/2; if (p_inRange(p.x, p.y, bx, TITLE_PLAY_Y, TITLE_PLAY_W, TITLE_PLAY_H)) { sfx.tap(); studyMode = false; titleScreen = false; weaponMenu = true; specialMenu = false; fusionMode = false; quickMode = false; applyChallenge(null); menuScrollY = 0; return; } }
     { const bx = (W-TITLE_FUSION_W)/2; if (p_inRange(p.x, p.y, bx, TITLE_FUSION_Y, TITLE_FUSION_W, TITLE_FUSION_H)) { sfx.tap(); studyMode = false; fusionMode = true; quickMode = false; fusionSelected = []; applyChallenge(null); titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0; return; } }
     { const bx = (W-TITLE_QUICK_W)/2; if (p_inRange(p.x, p.y, bx, TITLE_QUICK_Y, TITLE_QUICK_W, TITLE_QUICK_H)) { sfx.tap(); studyMode = false; quickMode = true; fusionMode = false; fusionSelected = []; applyChallenge(null); titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0; return; } }
+    { const bx = (W-TITLE_BOSS_W)/2; if (p_inRange(p.x, p.y, bx, TITLE_BOSS_Y, TITLE_BOSS_W, TITLE_BOSS_H)) { sfx.tap(); openBossSelect(); return; } }
     if (p_inRange(p.x, p.y, (W-TITLE_GACHA_W)/2, TITLE_GACHA_Y, TITLE_GACHA_W, TITLE_GACHA_H)) { sfx.tap(); rollGacha(); return; }
     if (p_inRange(p.x, p.y, TITLE_GRID_X1, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H)) { sfx.tap(); shopScreen = true; titleScreen = false; shopScrollY = 0; shopTab = "weapon"; return; }
     if (p_inRange(p.x, p.y, TITLE_GRID_X2, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H)) { sfx.tap(); checkDailyMissions(); missionScreen = true; titleScreen = false; return; }
@@ -1304,6 +1462,21 @@ function selectWeaponAt(x, y) {
   }
   if (weaponMenu) {
     const LIST_TOP = MENU_TOP+15, LIST_BOTTOM = H-70;
+    if (bossMode) {
+      if (p_inRange(x, y, 8, 6, 80, 28)) { sfx.tap(); exitBossSelect(); return; }
+      if (bossSelected.length === 3) { const by = H-45, bw = 220, bx = (W-bw)/2; if (p_inRange(x, y, bx, by-22, bw, 44)) { startBossBattleFromMenu(); return; } }
+      if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < LIST_TOP || y > LIST_BOTTOM) return;
+      const localY = y - LIST_TOP + menuScrollY;
+      const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
+      const avail = getAvailableWeapons();
+      if (idx < 0 || idx >= avail.length) return;
+      if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) > MENU_ITEM_HEIGHT) return;
+      const k = avail[idx], i = bossSelected.indexOf(k);
+      if (i >= 0) { sfx.tap(); bossSelected.splice(i, 1); }
+      else if (bossSelected.length < 3) { sfx.tap(); bossSelected.push(k); }
+      else bossSelMsg = 90;
+      return;
+    }
     if (fusionMode) {
       if (fusionSelected.length >= 2) {
         const by = H-45, bw = 220, bx = (W-bw)/2;
@@ -1362,6 +1535,7 @@ window.addEventListener("keydown", e => {
     if (k === "f") { studyMode = false; fusionMode = true; quickMode = false; fusionSelected = []; applyChallenge(null); titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0; return; }
     if (k === "q") { studyMode = false; quickMode = true; fusionMode = false; fusionSelected = []; applyChallenge(null); titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0; return; }
     if (k === "s") { shopScreen = true; titleScreen = false; shopScrollY = 0; shopTab = "weapon"; return; }
+    if (k === "b") { openBossSelect(); return; }
     if (k === "m") { checkDailyMissions(); missionScreen = true; titleScreen = false; return; }
     if (k === "c") { challengeScreen = true; titleScreen = false; return; }
     if (k === "t") { studySelectScreen = true; titleScreen = false; return; }
@@ -1375,6 +1549,11 @@ window.addEventListener("keydown", e => {
   if (shopScreen) { if (k === "escape" || k === "q") { shopScreen = false; titleScreen = true; } return; }
   if (specialMenu) { if (k === "escape" || k === "q") { specialMenu = false; weaponMenu = true; fusionSelected = []; fusionMode = false; } return; }
   if (weaponMenu) {
+    if (bossMode) {
+      if (k === "enter" && bossSelected.length === 3) { startBossBattleFromMenu(); return; }
+      if (k === "escape") { exitBossSelect(); return; }
+      return;
+    }
     if (fusionMode) {
       if (k === "enter" && fusionSelected.length >= 2) { startFusionGame(); return; }
       if (k === "escape") { fusionMode = false; fusionSelected = []; titleScreen = true; weaponMenu = false; return; }
@@ -1390,6 +1569,7 @@ window.addEventListener("keydown", e => {
 window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
 
 function returnToTitle() {
+  if (bossMode) { bossMode = false; bossSelected = []; bossActive = false; stopBossBGM(); }
   titleScreen = true; gameOver = false; gameClear = false;
   weaponMenu = false; specialMenu = false; shopScreen = false;
   missionScreen = false; challengeScreen = false; studySelectScreen = false;
@@ -1465,6 +1645,7 @@ function resetGame() {
   studyCorrectCount = 0; studyBurstGauge = 0;
   pauseScreen = false; pauseBackToTitleConfirm = false;
   createStars(); shake(25); flash("#00ffcc", 6);
+  if (bossMode) setupBossBattle();
 }
 let powerUpFlash = null;
 function tryDash() {
@@ -1792,6 +1973,7 @@ function enemyBulletSpeedScale() {
 
 /* ========== 敵生成 ========== */
 function spawnEnemy(forceType) {
+  if (bossMode) return;
   const roll = forceType ? 0 : Math.random();
   const hs = enemyHpScale(), ss = enemySpeedScale(), sh = enemyShootScale();
   let e;
@@ -1931,7 +2113,11 @@ function comboMultiplier() { return 1 + Math.floor(combo/5)*0.5; }
 function killEnemy(idx) {
   const e = enemies[idx];
   if (!e) return;
-  if (e.type === "boss" && !e.phase2 && bossKillCount < BOSS_KILL_TARGET && !studyMode && !quickMode) {
+  if (bossMode && e.bm) {
+    if (e.invuln) { e.hp = e.maxHp; return; }
+    if (bossForm < 3) { bossFormCleared(e); return; }
+  }
+  if (e.type === "boss" && !e.phase2 && bossKillCount < BOSS_KILL_TARGET && !studyMode && !quickMode && !bossMode) {
     e.phase2 = true;
     e.maxHp = e.maxHp*1.5;
     e.hp = e.maxHp;
@@ -1963,7 +2149,7 @@ function killEnemy(idx) {
     }, k*90);
     bossKillCount++;
     missionSession.bossKills = bossKillCount;
-    const target = studyMode ? 1 : (quickMode ? 1 : BOSS_KILL_TARGET);
+    const target = (studyMode || quickMode || bossMode) ? 1 : BOSS_KILL_TARGET;
     if (bossKillCount >= target && !gameClear) {
       gameClear = true; gameOver = true;
       missionSession.cleared = true;
@@ -2777,6 +2963,14 @@ function calcCoins(s, cleared, bk) {
 }
 let lastEarnedCoins = 0;
 function recordGameResult(cleared) {
+  if (bossMode) {
+    const fc = cleared ? 3 : bossForm-1;
+    const e = Math.floor((fc*40 + (cleared ? 200 : 0)) * getCoinRateMult());
+    saveData.coins = (saveData.coins||0) + e; saveData.totalCoinsEarned = (saveData.totalCoinsEarned||0) + e; lastEarnedCoins = e;
+    if (cleared) { saveData.bossClears = (saveData.bossClears||0) + 1; const t = Math.floor(time/60); if (!saveData.bossBestTime || t < saveData.bossBestTime) saveData.bossBestTime = t; }
+    writeSave(); updateMissionProgressFromSession();
+    return;
+  }
   const k = studyMode ? "study" : (fusionMode && activeWeapons.length > 1 ? activeWeapons.join("+") : selectedWeapon);
   if (!k) return;
   const e = calcCoins(score, cleared, bossKillCount);
@@ -3107,7 +3301,7 @@ function updateEnemies() {
           }
         } else e.y += e.speed*slow;
         if (e.wave !== undefined) { e.wave += .04; e.x += Math.sin(e.wave)*e.wavePower; }
-        if (e.type === "boss") { e.bossPhase += 0.02; if (e.y > 120) e.y -= e.speed*.5; e.x = W/2 + Math.sin(e.bossPhase)*130; }
+        if (e.type === "boss" && !e.bm) { e.bossPhase += 0.02; if (e.y > 120) e.y -= e.speed*.5; e.x = W/2 + Math.sin(e.bossPhase)*130; }
       }
     }
     if (Math.hypot(player.x-e.x, player.y-e.y) < player.hitR+e.r) {
@@ -3230,9 +3424,18 @@ function updateEnemyBullets() {
   if (theWorldTimer > 0 || studyQuizActive || pauseScreen) return;
   for (let i = enemyBullets.length-1; i >= 0; i--) {
     const b = enemyBullets[i];
+    b.t = (b.t || 0) + 1;
+    if (b.st !== undefined) {
+      if (b.t === b.st) { b.vx = 0; b.vy = 0; }
+      else if (b.t === b.st + b.ho) { const a = Math.atan2(player.y-b.y, player.x-b.x); b.vx = Math.cos(a)*b.gs; b.vy = Math.sin(a)*b.gs; }
+    }
+    if (b.w) { const c = Math.cos(b.w), s = Math.sin(b.w), vx = b.vx; b.vx = vx*c - b.vy*s; b.vy = vx*s + b.vy*c; }
+    if (b.ac && Math.hypot(b.vx, b.vy) < (b.vm || 9)) { b.vx *= b.ac; b.vy *= b.ac; }
+    if (b.sp && b.t === b.sp.t) { const q = b.sp; enemyBullets.splice(i,1); ering(b.x, b.y, q.n, Math.random()*TAU, q.s, q.r || 5, q.h, q.sp2 ? { sp: q.sp2 } : null); continue; }
     b.x += b.vx; b.y += b.vy;
-    if (Math.hypot(player.x-b.x, player.y-b.y) < player.hitR+b.r) { enemyBullets.splice(i,1); damagePlayer(1, 40); continue; }
-    if (b.x < -200 || b.x > W+200 || b.y < -200 || b.y > H+200) enemyBullets.splice(i,1);
+    if (b.bn > 0) { if (b.x < b.r) { b.x = b.r; b.vx = -b.vx; b.bn--; } else if (b.x > W-b.r) { b.x = W-b.r; b.vx = -b.vx; b.bn--; } }
+    if (Math.hypot(player.x-b.x, player.y-b.y) < player.hitR+b.r) { enemyBullets.splice(i,1); damagePlayer(b.dmg || 1, 40); continue; }
+    if (b.x < -400 || b.x > W+400 || b.y < -400 || b.y > H+400) enemyBullets.splice(i,1);
   }
 }
 function updatePowerups() {
@@ -3284,8 +3487,8 @@ function update() {
   if (player.hp/player.maxHp < 0.3) dangerTint = Math.min(1, dangerTint+0.05);
   else dangerTint = Math.max(0, dangerTint-0.02);
   beatPulse = (Math.sin(time*0.15)+1)*0.5;
-  waveTimer++;
-  if (waveTimer >= WAVE_DURATION) {
+  if (!bossMode) waveTimer++;
+  if (!bossMode && waveTimer >= WAVE_DURATION) {
     waveTimer = 0; wave++;
     if (wave > missionSession.maxWave) missionSession.maxWave = wave;
     let bw;
@@ -3300,6 +3503,7 @@ function update() {
   if (player.invincible > 0) player.invincible--;
   if (vampireHeal > 0) { const h = Math.min(vampireHeal, 0.5); player.hp = Math.min(player.maxHp, player.hp+h); vampireHeal -= h; }
   updatePlayer();
+  if (bossMode) updateBossBattle();
   const wc = Math.max(1, activeWeapons.length);
   const wm = 1 + (wc-1)*0.6;
   const lsb = Math.min(0.30, (level-1)*0.008);
@@ -3721,7 +3925,7 @@ function drawMuteButton() {
   ctx.restore();
 }
 function drawSpecialCircle() {
-  if (titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || pauseScreen || settingsScreen) return;
+  if (bossMode || titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || pauseScreen || settingsScreen) return;
   const cx = SPECIAL_BTN_X, cy = SPECIAL_BTN_Y, r = SPECIAL_BTN_R;
   const ratio = studyMode ? (studyBurstGauge/STUDY_BURST_MAX) : (specialGauge/SPECIAL_MAX);
   const full = studyMode ? (studyBurstGauge >= STUDY_BURST_MAX) : (specialGauge >= SPECIAL_MAX);
@@ -3822,9 +4026,19 @@ function drawTitle() {
     ctx.strokeRect(x, y, bw, bh);
     ctx.fillStyle = "rgba(255,204,0,.15)"; ctx.fillRect(x, y, bw, bh);
     ctx.fillStyle = "#ffcc00"; ctx.font = "bold 16px Arial";
-    ctx.fillText("⚡ QUICK MODE ⚡", W/2, y+22);
+    ctx.fillText("⚡ QUICK MODE ⚡", W/2, y+17);
     ctx.fillStyle = "rgba(255,255,255,.8)"; ctx.font = "10px Arial";
-    ctx.fillText("WAVE 2 でボス出現", W/2, y+38);
+    ctx.fillText("WAVE 2 でボス出現", W/2, y+31);
+  }
+  {
+    const y = TITLE_BOSS_Y, bw = TITLE_BOSS_W, bh = TITLE_BOSS_H, x = (W-bw)/2;
+    ctx.shadowBlur = 25; ctx.shadowColor = "#ff0044"; ctx.strokeStyle = "#ff0044"; ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, bw, bh);
+    ctx.fillStyle = "rgba(255,0,68,.15)"; ctx.fillRect(x, y, bw, bh);
+    ctx.fillStyle = "#ff4466"; ctx.font = "bold 16px Arial";
+    ctx.fillText("BOSS BATTLE", W/2, y+17);
+    ctx.fillStyle = "rgba(255,255,255,.8)"; ctx.font = "10px Arial";
+    ctx.fillText("武器3つ・必殺なし・3形態の弾幕ボス", W/2, y+31);
   }
   const gbtn = (x, y, w, h, color, label, sub, badge) => {
     ctx.shadowBlur = 25; ctx.shadowColor = color; ctx.strokeStyle = color; ctx.lineWidth = 3;
@@ -4223,12 +4437,12 @@ function drawSettingsScreen() {
 function drawWeaponMenu() {
   ctx.fillStyle = "rgba(0,0,8,.92)"; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
-  ctx.fillStyle = fusionMode ? "#ff00ff" : "#00ffcc";
+  ctx.fillStyle = bossMode ? "#ff0044" : fusionMode ? "#ff00ff" : "#00ffcc";
   ctx.font = "bold 22px Arial";
-  ctx.shadowBlur = 20; ctx.shadowColor = fusionMode ? "#ff00ff" : "#00ffcc";
-  ctx.fillText(fusionMode ? "⚡ FUSION MODE ⚡" : "武器を選択", W/2, 30);
+  ctx.shadowBlur = 20; ctx.shadowColor = bossMode ? "#ff0044" : fusionMode ? "#ff00ff" : "#00ffcc";
+  ctx.fillText(bossMode ? "BOSS BATTLE" : fusionMode ? "⚡ FUSION MODE ⚡" : "武器を選択", W/2, 30);
   ctx.fillStyle = "#fff"; ctx.font = "11px Arial"; ctx.shadowBlur = 0;
-  ctx.fillText(fusionMode ? `選択中: ${fusionSelected.length}個 (2個以上で開始)` : "タップ / スクロールで選択", W/2, 50);
+  ctx.fillText(bossMode ? `武器をちょうど3つ選択 (${bossSelected.length}/3)` : fusionMode ? `選択中: ${fusionSelected.length}個 (2個以上で開始)` : "タップ / スクロールで選択", W/2, 50);
   if (selectedChallenge) {
     ctx.fillStyle = CHALLENGES[selectedChallenge].color;
     ctx.font = "bold 11px Arial"; ctx.shadowBlur = 10; ctx.shadowColor = CHALLENGES[selectedChallenge].color;
@@ -4245,7 +4459,7 @@ function drawWeaponMenu() {
     const w = weapons[k];
     const y = LT + i*(MENU_ITEM_HEIGHT+MENU_GAP) - menuScrollY;
     if (y+MENU_ITEM_HEIGHT < LT || y > LB) continue;
-    const fs = fusionMode && fusionSelected.includes(k);
+    const fs = bossMode ? bossSelected.includes(k) : (fusionMode && fusionSelected.includes(k));
     const rec = saveData.weaponRecords[k];
     const cl = rec && rec.cleared;
     let bc = w.color, bw = 2;
@@ -4274,7 +4488,24 @@ function drawWeaponMenu() {
     ctx.textAlign = "left";
   }
   ctx.restore();
-  if (fusionMode) {
+  if (bossMode) {
+    ctx.textAlign = "center";
+    ctx.strokeStyle = "#888"; ctx.lineWidth = 2; ctx.strokeRect(8, 6, 80, 28);
+    ctx.fillStyle = "#ccc"; ctx.font = "bold 13px Arial"; ctx.fillText("◀ 戻る", 48, 25);
+    if (bossSelected.length === 3) {
+      const by = H-45, bw = 220, bx = (W-bw)/2, pulse = 0.5 + Math.sin(Date.now()*0.01)*0.5;
+      ctx.shadowBlur = 30; ctx.shadowColor = "#ff0044"; ctx.strokeStyle = "#ff0044"; ctx.lineWidth = 3;
+      ctx.strokeRect(bx, by-22, bw, 44);
+      ctx.fillStyle = `rgba(255,0,68,${0.2+pulse*0.2})`; ctx.fillRect(bx, by-22, bw, 44);
+      ctx.fillStyle = "#ff4466"; ctx.font = "bold 20px Arial"; ctx.fillText("BATTLE START ▶", W/2, by+7);
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.fillStyle = bossSelMsg > 0 ? "#ff6666" : "rgba(255,255,255,.5)"; ctx.font = "12px Arial";
+      ctx.fillText(bossSelMsg > 0 ? "3つまで！ 外してから選んでね" : "ちょうど3つ選択してください", W/2, H-25);
+    }
+    if (bossSelMsg > 0) bossSelMsg--;
+    ctx.textAlign = "left";
+  } else if (fusionMode) {
     if (fusionSelected.length >= 2) {
       const by = H-45, bw = 220, bx = (W-bw)/2;
       const pulse = 0.5 + Math.sin(Date.now()*0.01)*0.5;
@@ -4403,7 +4634,7 @@ function drawGameOver() {
     if (studyMode) sub = "📚 STUDY CLEAR 📚";
     else if (selectedChallenge) sub = "🔥 CHALLENGE CLEAR 🔥";
     else if (fusionMode && activeWeapons.length > 1) sub = "⚡ FUSION CLEAR ⚡";
-    ctx.fillText(sub, W/2, y);
+    ctx.fillText(bossMode ? "BOSS BATTLE CLEAR" : sub, W/2, y);
     y += 40;
     ctx.shadowBlur = 15; ctx.shadowColor = "#ffd700"; ctx.fillStyle = "#ffd700";
     ctx.font = "bold 22px Arial";
@@ -4429,7 +4660,7 @@ function drawGameOver() {
     ctx.font = "bold 18px Arial";
     ctx.fillText(`LEVEL : ${level}`, W/2, y);
     y += 26;
-    ctx.fillText(`WAVE : ${wave}`, W/2, y);
+    ctx.fillText(bossMode ? `FORM : ${bossForm} / 3   TIME : ${Math.floor(time/60)}s` : `WAVE : ${wave}`, W/2, y);
     y += 26;
     ctx.fillStyle = "#ffcc00"; ctx.shadowColor = "#ffcc00";
     ctx.font = "bold 16px Arial";
@@ -4469,7 +4700,7 @@ function drawGameOver() {
     ctx.font = "bold 18px Arial";
     ctx.fillText(`LEVEL : ${level}`, W/2, y);
     y += 26;
-    ctx.fillText(`WAVE : ${wave}`, W/2, y);
+    ctx.fillText(bossMode ? `FORM : ${bossForm} / 3   TIME : ${Math.floor(time/60)}s` : `WAVE : ${wave}`, W/2, y);
     y += 30;
     ctx.fillStyle = "#ffcc00"; ctx.shadowColor = "#ffcc00";
     ctx.font = "bold 16px Arial";
@@ -4533,7 +4764,8 @@ function draw() {
     ctx.save();
     for (const b of enemyBullets) {
       const c = `hsl(${b.hue || 30},100%,65%)`;
-      ctx.shadowBlur = 12; ctx.shadowColor = c; ctx.fillStyle = c;
+      ctx.shadowBlur = bossMode ? 0 : 12; ctx.shadowColor = c; ctx.fillStyle = c;
+      if (bossMode) { ctx.globalAlpha = .3; ctx.beginPath(); ctx.arc(b.x, b.y, b.r*1.8, 0, TAU); ctx.fill(); ctx.globalAlpha = 1; }
       ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
       ctx.shadowBlur = 0;
       ctx.fillStyle = "rgba(255,255,255,.85)";
@@ -4542,7 +4774,7 @@ function draw() {
     ctx.restore();
     drawLightning();
     drawDamageNumbers();
-    drawGameUI();
+    if (bossMode) drawBossUI(); else drawGameUI();
     drawSpecialEffect();
     drawTheWorldEffect();
     drawMudaMudaEffect();
