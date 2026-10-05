@@ -201,7 +201,7 @@ function startSynthBGM() {
   if (bgmSchedulerId) clearInterval(bgmSchedulerId);
   bgmNextStepTime = audioCtx.currentTime + 0.05;
   bgmCurrentStep = 0;
-  bgmSchedulerId = setInterval(bgmScheduler, 50);
+  bgmSchedulerId = setInterval(bgmScheduler, 25);
 }
 /* MP3 BGM (index.html と同じフォルダの Attack.mp3 を再生) */
 const BGM_FILE = "Attack.mp3";
@@ -1000,9 +1000,6 @@ function startGameWithCurrentSelection() {
   shake(25); flash(specials[selectedSpecial].color, 10); chroma(10);
   saveData.totalPlays = (saveData.totalPlays || 0) + 1;
   writeSave();
-  /* 通常ゲーム開始時は通常BGMへ */
-  if (typeof stopBossBGM === "function") { if (bossAudio) bossAudio.pause(); }
-  if (audioCtx && bgmAudio) { bgmAudio.play().catch(()=>{}); }
 }
 function startFusionGame() {
   if (fusionSelected.length < 2) return;
@@ -1046,8 +1043,6 @@ function startStudyMode(grade) {
   shake(25); flash("#66ccff", 10); chroma(10);
   saveData.totalPlays = (saveData.totalPlays || 0) + 1;
   writeSave();
-  if (typeof stopBossBGM === "function") { if (bossAudio) bossAudio.pause(); }
-  if (audioCtx && bgmAudio) { bgmAudio.play().catch(()=>{}); }
 }
 
 /* ========== BOSS BATTLE MODE ========== */
@@ -1062,7 +1057,7 @@ function openBossSelect() {
   bossMode = true; bossSelected = [];
   titleScreen = false; weaponMenu = true; specialMenu = false; menuScrollY = 0;
 }
-function exitBossSelect() { bossMode = false; bossSelected = []; weaponMenu = false; titleScreen = true; menuScrollY = 0; if (typeof stopBossBGM === "function") stopBossBGM(); }
+function exitBossSelect() { bossMode = false; bossSelected = []; weaponMenu = false; titleScreen = true; menuScrollY = 0; }
 function startBossBattleFromMenu() {
   if (bossSelected.length !== 3) return;
   sfx.tap();
@@ -1072,7 +1067,7 @@ function startBossBattleFromMenu() {
 }
 function setupBossBattle() {
   challengeNoSpecials = true;
-  player.maxHp = Math.max(10, Math.floor((50 + getMaxHpBonus())/2)); player.hp = player.maxHp;
+  player.maxHp = 10; player.hp = player.maxHp;
   player.x = W/2; player.y = H-120; player.cool = 0; player.invincible = 60;
   player.dashTimer = 0; player.dashCooldown = 0;
   knifeAngle = -Math.PI/2; knifeTouchMode = null; swordAngle = -Math.PI/2;
@@ -1977,15 +1972,8 @@ function enemyBulletSpeedScale() {
 }
 
 /* ========== 敵生成 ========== */
-const ENEMY_MAX = 30;
 function spawnEnemy(forceType) {
   if (bossMode) return;
-  // ボス以外の敵が30体以上いる場合は追加しない
-  if (forceType !== "boss") {
-    let cnt = 0;
-    for (let i = 0; i < enemies.length; i++) if (enemies[i].type !== "boss") cnt++;
-    if (cnt >= ENEMY_MAX) return;
-  }
   const roll = forceType ? 0 : Math.random();
   const hs = enemyHpScale(), ss = enemySpeedScale(), sh = enemyShootScale();
   let e;
@@ -2444,7 +2432,20 @@ function fireCrossbow() {
 }
 function fireGrenade() {
   const p = pw("grenade");
-  addBullet({ vx:0, vy:-15, size: 10+p, damage: 2+p*0.5, type:"grenade", gravity: 0.5, blastRadius: 80+p*15, fuse: 60, trail:true });
+  const T = 42, g = 0.5;   /* 飛行フレーム数 / 重力 */
+  /* 着弾点: いちばん近い敵(少し先読み)。いなければ真上方向 */
+  let tx = player.x, ty = Math.max(60, player.y-260);
+  const cand = enemies.filter(e => e && e.hp > 0 && e.y > 0 && e.y < H-40);
+  if (cand.length) {
+    cand.sort((a,b) => Math.hypot(a.x-player.x, a.y-player.y) - Math.hypot(b.x-player.x, b.y-player.y));
+    const tg = cand[0];
+    tx = tg.x; ty = tg.y + (tg.speed || 0)*T*0.8;
+  }
+  tx = Math.max(20, Math.min(W-20, tx)); ty = Math.max(40, Math.min(H-60, ty));
+  const vx = (tx-player.x)/T;
+  const vy = ((ty-player.y) - g*T*(T+1)/2)/T;
+  /* fuse=飛行時間ちょうどで着弾点にて必ず爆発。途中の敵には当たらない */
+  addBullet({ vx, vy, size: 10+p, damage: 18+p*5, type:"grenade", gravity: g, blastRadius: 90+p*15, fuse: T, life: T+30, trail:true });
   sfx.shootHeavy(); shake(4);
 }
 function fireChainsaw() {
@@ -2457,9 +2458,11 @@ function fireChainsaw() {
       if (!e) continue;
       if (Math.hypot(e.x-x, e.y-y) < e.r+12) {
         if (!e._chainsawCD || e._chainsawCD <= 0) {
-          e.hp -= 3+p*1;
-          e._chainsawCD = 15;
-          burst(x, y, 10, "#ff3300");
+          const cd = 9+p*3;
+          e.hp -= cd;
+          e._chainsawCD = 10;
+          showDamage(e.x, e.y, cd, "#ff3300");
+          burst(x, y, 14, "#ff3300"); burst(x, y, 6, "#ffffff");
           if (e.hp <= 0) killEnemy(j);
         }
       }
@@ -2484,18 +2487,43 @@ function firePhoenix() {
 }
 function fireWarp() {
   const p = pw("warp");
-  const tg = enemies.slice().sort((a,b) => Math.hypot(a.x-player.x, a.y-player.y) - Math.hypot(b.x-player.x, b.y-player.y))[0];
-  if (tg) {
-    const ox = player.x, oy = player.y;
-    player.x = tg.x; player.y = tg.y-30;
-    player.invincible = Math.max(player.invincible, 20);
-    burst(ox, oy, 25, "#aa00ff"); burst(player.x, player.y, 25, "#aa00ff");
-    const d = 6+p*1.5;
-    tg.hp -= d;
-    showBigDamage(tg.x, tg.y, d, "#aa00ff");
-    if (tg.hp <= 0) killEnemy(enemies.indexOf(tg));
-    sfx.dash(); shake(10); flash("#aa00ff", 5); chroma(10);
+  /* いちばん近い画面内の敵へ */
+  const cand = enemies.filter(e => e && e.hp > 0 && e.y > 0 && e.y < H);
+  cand.sort((a,b) => Math.hypot(a.x-player.x, a.y-player.y) - Math.hypot(b.x-player.x, b.y-player.y));
+  const tg = cand[0];
+  if (!tg) return;
+  const ox = player.x, oy = player.y;
+  let dx = tg.x-ox, dy = tg.y-oy, d = Math.hypot(dx, dy);
+  if (d < 1) { dx = 0; dy = -1; d = 1; }
+  const nx = dx/d, ny = dy/d;
+  /* 敵を飛び越えて、その向こう側に着地 */
+  const land = tg.r + 34;
+  const lx = Math.max(player.hitR, Math.min(W-player.hitR, tg.x + nx*land));
+  const ly = Math.max(player.hitR, Math.min(H-player.hitR, tg.y + ny*land));
+  player.x = lx; player.y = ly;
+  player.invincible = Math.max(player.invincible, 30);
+  /* 斬撃エフェクト(ザッ) */
+  lightningBolts.push({ points: [{ x: ox, y: oy }, { x: lx, y: ly }], life: 16, color: "#aa00ff" });
+  lightningBolts.push({ points: [{ x: ox, y: oy }, { x: lx, y: ly }], life: 12, color: "#ffffff" });
+  for (let k = 0; k <= 10; k++) burst(ox+(lx-ox)*k/10, oy+(ly-oy)*k/10, 6, k%2 ? "#ffffff" : "#aa00ff");
+  burst(ox, oy, 25, "#aa00ff");
+  /* 移動線上(と着地点の敵)を全部斬る: 通常敵は一撃、ボスは割合ダメージ */
+  const sx = lx-ox, sy = ly-oy, sl2 = sx*sx + sy*sy || 1;
+  for (const e of enemies.slice()) {
+    if (!e || e.hp <= 0) continue;
+    const t = Math.max(0, Math.min(1, ((e.x-ox)*sx + (e.y-oy)*sy)/sl2));
+    const dist = Math.hypot(e.x-(ox+sx*t), e.y-(oy+sy*t));
+    if (e !== tg && dist > e.r + 16) continue;
+    let dmg;
+    if (e.type === "boss") dmg = Math.max(8, e.maxHp*Math.min(0.4, 0.2+p*0.02));
+    else { dmg = e.hp + 1; e.shielded = false; }
+    e.hp -= dmg;
+    showBigDamage(e.x, e.y, e.type === "boss" ? Math.round(dmg) : "SLASH!", "#ffffff");
+    burst(e.x, e.y, 40, "#ffffff"); burst(e.x, e.y, 25, "#aa00ff");
+    shockwaves.push({ x:e.x, y:e.y, radius:6, maxRadius:70, life:14, color:"255,255,255" });
+    if (e.hp <= 0) { const idx = enemies.indexOf(e); if (idx >= 0) killEnemy(idx); }
   }
+  sfx.dash(); sfx.shootHeavy(); shake(12); flash("#aa00ff", 5); chroma(10); hitStopAdd(3);
 }
 function fireMagnet() {
   const p = pw("magnet"), r = 120+level*4+p*15;
@@ -2661,7 +2689,7 @@ function updateOrbit() {
   orbitAngle += .055;
   const c = Math.max(1, level)+p*2;
   const r = 52+Math.min(25, level*1.5)+p*8;
-  const d = 1+level*.25+p*.5;
+  const d = 2.5+level*.7+p*1.5;
   for (let i = enemies.length-1; i >= 0; i--) {
     const e = enemies[i];
     if (!e) continue;
@@ -2670,7 +2698,7 @@ function updateOrbit() {
       const a = orbitAngle + s*TAU/c;
       const x = player.x+Math.cos(a)*r, y = player.y+Math.sin(a)*r;
       if (Math.hypot(e.x-x, e.y-y) < e.r+9) {
-        if (e.orbitCooldown <= 0) { e.hp -= d; e.orbitCooldown = 18; burst(x, y, 10, "#c8a2ff"); burst(x, y, 5, "#ffffff"); }
+        if (e.orbitCooldown <= 0) { e.hp -= d; e.orbitCooldown = 18; showDamage(e.x, e.y, Math.round(d*10)/10, "#c8a2ff"); burst(x, y, 10, "#c8a2ff"); burst(x, y, 5, "#ffffff"); }
         break;
       }
     }
@@ -3317,14 +3345,27 @@ function updateEnemies() {
       }
     }
     if (Math.hypot(player.x-e.x, player.y-e.y) < player.hitR+e.r) {
-      damagePlayer(e.type === "heavy" ? 15 : e.type === "boss" ? 25 : e.type === "tank" ? 20 : 8, 55);
-      if (e.type !== "boss") { burst(e.x, e.y, 35, "#ff3366"); burst(e.x, e.y, 20, "#ffffff"); enemies.splice(i,1); continue; }
+      if (e.type === "boss") {
+        /* ボスに近づく → ダメージ + 弾き返し */
+        damagePlayer(bossMode ? 3 : 25, 55);
+        const bx = player.x-e.x, by = player.y-e.y, bd = Math.hypot(bx, by) || 1;
+        const bnx = bx/bd, bny = by/bd, push = player.hitR+e.r+8;
+        player.x = Math.max(player.hitR, Math.min(W-player.hitR, e.x+bnx*push));
+        player.y = Math.max(player.hitR, Math.min(H-player.hitR, e.y+bny*push));
+        player.dashVx = bnx*11; player.dashVy = bny*11; player.dashTimer = 8;
+        burst(player.x, player.y, 30, "#ff0044"); burst(player.x, player.y, 15, "#ffffff");
+        shockwaves.push({ x:e.x+bnx*e.r, y:e.y+bny*e.r, radius:6, maxRadius:80, life:14, color:"255,0,68" });
+        shake(25); hitStopAdd(4);
+      } else {
+        damagePlayer(e.type === "heavy" ? 15 : e.type === "tank" ? 20 : 8, 55);
+        burst(e.x, e.y, 35, "#ff3366"); burst(e.x, e.y, 20, "#ffffff"); enemies.splice(i,1); continue;
+      }
     }
     let killed = false;
     for (let j = bullets.length-1; j >= 0; j--) {
       const b = bullets[j];
       if (!b) continue;
-      if (["blackhole","gravity","tornado","sonic","snake","greenfire"].includes(b.type)) continue;
+      if (["blackhole","gravity","tornado","sonic","snake","greenfire","grenade"].includes(b.type)) continue;
       if (b.type === "mochi" && e.flying) continue;
       if (b.type === "boomerang" && b.hitSet && b.hitSet.has(e)) continue;
       if (b.type === "railgun" && b.hitSet && b.hitSet.has(e)) continue;
@@ -5825,9 +5866,10 @@ let inboxScreen = false;
 let inboxScroll = 0;
 const GIFT_COIN_PRESETS = [50, 100, 300, 500, 1000];
 
+/* ★ プレゼントボタンは右上（設定ボタンの下）に丸ボタンとして配置 */
 const TITLE_GIFT_BTN_R = 24;
-const TITLE_GIFT_BTN_X = W - TITLE_GIFT_BTN_R - 16;
-const TITLE_GIFT_BTN_Y = 40 + 24 + 24 + 16;
+const TITLE_GIFT_BTN_X = W - TITLE_GIFT_BTN_R - 16;   // 設定ボタンと同じX
+const TITLE_GIFT_BTN_Y = 40 + 24 + 24 + 16;           // 設定ボタンの下
 
 function openGiftMenu(){
   giftScreen = "menu";
@@ -6178,6 +6220,7 @@ function drawInbox(){
   ctx.textAlign = "left";
 }
 
+/* ========== タイトルへ組み込み ========== */
 const _origDrawTitle = window.drawTitle;
 window.drawTitle = function(){
   if (needsNameInput() && !nameInputActive) openNameInput();
@@ -6187,6 +6230,7 @@ window.drawTitle = function(){
   drawGiftReceivePopup();
 };
 
+/* ★ 丸ボタン描画（右上・設定ボタンの下） */
 function drawGiftButton(){
   if (showDailyBonusPopup) return;
   ctx.save();
@@ -6206,6 +6250,7 @@ function drawGiftButton(){
   ctx.textAlign = "left";
 }
 
+/* 描画フック */
 const _origDraw = window.draw;
 window.draw = function(){
   if (giftScreen !== "none") { drawBackground(); drawGiftScreen(); return; }
@@ -6213,6 +6258,7 @@ window.draw = function(){
   _origDraw();
 };
 
+/* ========== 入力フック ========== */
 const _origStart = startPointer;
 function giftStart(e){
   if (e.target === nameEl) return;
@@ -6330,6 +6376,7 @@ canvas.addEventListener("mousedown", giftStart, { capture:true });
 canvas.removeEventListener("touchstart", startPointer);
 canvas.removeEventListener("mousedown", startPointer);
 
+/* 名前入力のキーボード処理を元ハンドラより先に処理 */
 window.addEventListener("keydown", (e) => {
   if (nameInputActive) {
     e.stopImmediatePropagation();
@@ -6354,203 +6401,9 @@ window.addEventListener("keydown", (e) => {
   }
 }, true);
 
+/* 起動時に受信 */
 setTimeout(receiveGifts, 600);
 
-})();
-</script>
-
-<!-- ===== NEON PATCH 3: 軽量化 / 敵30体制限 / バックグラウンド対応 ===== -->
-<script>
-(function(){
-"use strict";
-
-/* =========================================================
-   1. 敵の最大数を30体に制限
-   ========================================================= */
-const ENEMY_MAX = 30;
-const _spawnEnemy = window.spawnEnemy;
-window.spawnEnemy = function(forceType){
-  if (forceType === "boss") return _spawnEnemy(forceType);
-  let count = 0;
-  for (let i = 0; i < enemies.length; i++) if (enemies[i].type !== "boss") count++;
-  if (count >= ENEMY_MAX) return;
-  _spawnEnemy(forceType);
-};
-
-/* =========================================================
-   2. パーティクル / 弾 / 敵弾 の上限を厳格化
-   ========================================================= */
-const PARTICLE_MAX = 320;
-const ENEMY_BULLET_MAX = 700;
-const PLAYER_BULLET_MAX = 500;
-const DAMAGE_NUM_MAX = 24;
-const SHOCKWAVE_MAX = 24;
-
-const _burst = window.burst;
-window.burst = function(x, y, count, color){
-  const room = PARTICLE_MAX - particles.length;
-  if (room <= 0) return;
-  _burst(x, y, Math.min(count, room), color);
-};
-
-setInterval(function(){
-  if (damageNumbers.length > DAMAGE_NUM_MAX) {
-    damageNumbers.splice(0, damageNumbers.length - DAMAGE_NUM_MAX);
-  }
-  if (shockwaves.length > SHOCKWAVE_MAX) {
-    shockwaves.splice(0, shockwaves.length - SHOCKWAVE_MAX);
-  }
-  if (particles.length > PARTICLE_MAX) {
-    particles.splice(0, particles.length - PARTICLE_MAX);
-  }
-  if (enemyBullets.length > ENEMY_BULLET_MAX) {
-    enemyBullets.splice(0, enemyBullets.length - ENEMY_BULLET_MAX);
-  }
-  if (bullets.length > PLAYER_BULLET_MAX) {
-    bullets.splice(0, bullets.length - PLAYER_BULLET_MAX);
-  }
-}, 250);
-
-const _eb = window.eb;
-window.eb = function(){
-  if (enemyBullets.length >= ENEMY_BULLET_MAX) return;
-  _eb.apply(this, arguments);
-};
-
-const _addBullet = window.addBullet;
-window.addBullet = function(d){
-  if (bullets.length >= PLAYER_BULLET_MAX) {
-    bullets.shift();
-  }
-  _addBullet(d);
-};
-
-const _fireEnemyBullet = window.fireEnemyBullet;
-window.fireEnemyBullet = function(e){
-  if (enemyBullets.length >= ENEMY_BULLET_MAX) return;
-  _fireEnemyBullet(e);
-};
-
-/* =========================================================
-   3. 描画の間引き
-   ========================================================= */
-const _drawEffects = window.drawEffects;
-window.drawEffects = function(){
-  if (particles.length > 120) {
-    for (let i = particles.length - 1; i >= 0; i--) {
-      const p = particles[i];
-      if (p.x < -20 || p.x > W + 20 || p.y < -20 || p.y > H + 20 || p.life <= 0) {
-        particles.splice(i, 1);
-      }
-    }
-  }
-  _drawEffects();
-};
-
-const _drawBullet = window.drawBullet;
-window.drawBullet = function(b){
-  if (b.x < -60 || b.x > W + 60 || b.y < -60 || b.y > H + 60) return;
-  _drawBullet(b);
-};
-
-/* =========================================================
-   4. BGM スケジューラの負荷軽減
-   ========================================================= */
-if (typeof bgmSchedulerId !== "undefined" && bgmSchedulerId) {
-  clearInterval(bgmSchedulerId);
-  bgmSchedulerId = setInterval(bgmScheduler, 50);
-}
-
-/* =========================================================
-   5. 画面消灯時も動作継続（Wake Lock + 可視性対策）
-   ========================================================= */
-let wakeLock = null;
-async function requestWakeLock(){
-  try {
-    if ("wakeLock" in navigator && document.visibilityState === "visible") {
-      wakeLock = await navigator.wakeLock.request("screen");
-      wakeLock.addEventListener("release", () => { wakeLock = null; });
-    }
-  } catch (e) {}
-}
-window.addEventListener("pointerdown", function once(){
-  requestWakeLock();
-  window.removeEventListener("pointerdown", once, true);
-}, true);
-window.addEventListener("keydown", function once(){
-  requestWakeLock();
-  window.removeEventListener("keydown", once, true);
-}, true);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") requestWakeLock();
-});
-
-let bgInterval = null;
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") {
-    if (bgInterval) return;
-    bgInterval = setInterval(function(){
-      try {
-        if (typeof pauseScreen !== "undefined" && pauseScreen) return;
-        if (typeof titleScreen !== "undefined" && titleScreen) return;
-        if (typeof gameOver !== "undefined" && gameOver) return;
-        if (typeof time !== "undefined") time++;
-        if (typeof bgmAudio !== "undefined" && bgmAudio && bgmAudio.paused && bgmEnabled) {
-          bgmAudio.play().catch(()=>{});
-        }
-        if (typeof bossAudio !== "undefined" && bossAudio && bossAudio.paused && bossMode) {
-          bossAudio.play().catch(()=>{});
-        }
-      } catch (e) {}
-    }, 100);
-  } else {
-    if (bgInterval) { clearInterval(bgInterval); bgInterval = null; }
-  }
-});
-
-let lastVisible = Date.now();
-document.addEventListener("visibilitychange", () => {
-  const now = Date.now();
-  if (document.visibilityState === "visible") {
-    const away = (now - lastVisible) / 1000;
-    if (away > 10 && typeof time !== "undefined") {
-      /* 何もしない（自然に戻る） */
-    }
-  }
-  lastVisible = now;
-});
-
-/* =========================================================
-   6. オーディオの負荷軽減（同時発音数を制限）
-   ========================================================= */
-let activeVoices = 0;
-const VOICE_MAX = 12;
-const _playTone = window.playTone;
-window.playTone = function(o){
-  if (activeVoices >= VOICE_MAX) return;
-  activeVoices++;
-  try { _playTone(o); } catch (e) {}
-  setTimeout(() => { activeVoices = Math.max(0, activeVoices - 1); }, (o && o.dur ? o.dur * 1000 : 100) + 30);
-};
-const _playNoise = window.playNoise;
-window.playNoise = function(o){
-  if (activeVoices >= VOICE_MAX) return;
-  activeVoices++;
-  try { _playNoise(o); } catch (e) {}
-  setTimeout(() => { activeVoices = Math.max(0, activeVoices - 1); }, (o && o.dur ? o.dur * 1000 : 100) + 30);
-};
-
-/* =========================================================
-   7. wheel イベントのスロットル
-   ========================================================= */
-let wheelLock = false;
-canvas.addEventListener("wheel", function(e){
-  if (wheelLock) { e.preventDefault(); return; }
-  wheelLock = true;
-  setTimeout(() => { wheelLock = false; }, 16);
-}, { passive:false, capture:true });
-
-console.log("[NEON PATCH 3] 軽量化 / 敵30体制限 / バックグラウンド対応 適用完了");
 })();
 </script>
 
