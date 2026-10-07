@@ -331,6 +331,9 @@ const UPGRADES = {
   gauge:      { name: "必殺ゲージ +15%",  description: "必殺ゲージの溜まりUP",    color: "#ff88ff", basePrice: 350, maxLevel: 10, step: 0.15 },
   defense:    { name: "被ダメ -5%",       description: "受けるダメージが5%減る",  color: "#66ccff", basePrice: 300, maxLevel: 10, step: 0.05 },
   invincible: { name: "無敵時間 +20f",    description: "被弾後の無敵時間UP",      color: "#ffffff", basePrice: 200, maxLevel: 8,  step: 20 },
+  slot:       { name: "🎰 コインスロット",  description: "運試し! 最大20倍(平均は元手割れ)", color: "#ffdd00", basePrice: 500, maxLevel: 999999, step: 0, fixed: true },
+  boostticket:{ name: "🎫 出撃ブースト券",  description: "次の1戦だけ全武器パワー+2", color: "#ff4488", basePrice: 400, maxLevel: 9, step: 0, fixed: true, consume: true },
+  shieldticket:{ name: "🛡 バリア券",       description: "次の1戦、最初の被弾を無効化", color: "#66ccff", basePrice: 300, maxLevel: 9, step: 0, fixed: true, consume: true },
   startpower: { name: "武器パワー +1",    description: "全武器が最初からパワーUP", color: "#ff4488", basePrice: 600, maxLevel: 5,  step: 1 },
   revive:     { name: "復活 +1回",        description: "死亡時HP半分で復活(1戦ごと)", color: "#ffaa00", basePrice: 1200, maxLevel: 3,  step: 1 },
   expgain:    { name: "経験値 +10%",      description: "獲得EXPが10%増える",      color: "#66ccff", basePrice: 350, maxLevel: 8,  step: 0.10 },
@@ -339,7 +342,8 @@ const UPGRADES = {
 };
 const UPGRADE_ORDER = Object.keys(UPGRADES);
 function getUpgradeLevel(k) { return (saveData.upgrades && saveData.upgrades[k]) || 0; }
-function getUpgradePrice(k) { return Math.floor(UPGRADES[k].basePrice * Math.pow(1.6, getUpgradeLevel(k))); }
+let shopLastMsg = "";
+function getUpgradePrice(k) { if (UPGRADES[k].fixed) return UPGRADES[k].basePrice; return Math.floor(UPGRADES[k].basePrice * Math.pow(1.6, getUpgradeLevel(k))); }
 function isUpgradeMaxed(k) { return getUpgradeLevel(k) >= UPGRADES[k].maxLevel; }
 function buyUpgrade(k) {
   if (isUpgradeMaxed(k)) return false;
@@ -347,7 +351,12 @@ function buyUpgrade(k) {
   if (saveData.coins < p) return false;
   saveData.coins -= p;
   if (!saveData.upgrades) saveData.upgrades = {};
-  saveData.upgrades[k] = getUpgradeLevel(k) + 1;
+  if (k === "slot") {
+    saveData.upgrades.slot = getUpgradeLevel("slot") + 1;
+    const r = Math.random(), T = [[.50,0],[.75,300],[.89,600],[.97,1000],[.994,3000],[1.01,10000]]; let w = 0;
+    for (const t of T) if (r < t[0]) { w = t[1]; break; }
+    saveData.coins += w; shopLastMsg = w > 0 ? `🎰 当たり！ +${w}コイン${w >= 3000 ? " 大当たり!!" : ""}` : "🎰 ハズレ…";
+  } else { saveData.upgrades[k] = getUpgradeLevel(k) + 1; shopLastMsg = ""; }
   writeSave(); return true;
 }
 function getMaxHpBonus() { return getUpgradeLevel("maxhp") * UPGRADES.maxhp.step; }
@@ -687,7 +696,12 @@ const weapons = {
   blueattack: { name:"BLUE ATTACK", description:"静止要求", color:"#4488ff", price:800 },
   gaster: { name:"GASTER BLASTER", description:"頭蓋砲", color:"#ffffff", price:1800 },
   heartbreak: { name:"HEART BREAK", description:"決意の刃", color:"#ff0044", price:1000 },
-  determination: { name:"DETERMINATION", description:"被弾無効", color:"#ff0000", price:1500 }
+  determination: { name:"DETERMINATION", description:"被弾無効", color:"#ff0000", price:1500 },
+  mirror: { name:"MIRROR", description:"敵弾を弾き返して攻撃に変える", color:"#bfefff", price:600 },
+  moneygun: { name:"MONEY GUN", description:"コインを弾にする(所持金で威力UP)", color:"#ffd700", price:500 },
+  dice: { name:"DICE", description:"出目×威力。6で大爆発", color:"#ff99cc", price:400 },
+  berserk: { name:"BERSERKER", description:"HPが減るほど超連射・超威力", color:"#ff2222", price:700 },
+  echo: { name:"ECHO", description:"命中点が1秒後にもう一度爆ぜる", color:"#99ccff", price:450 }
 };
 const WEAPON_ORDER = Object.keys(weapons);
 const specials = {
@@ -1445,7 +1459,7 @@ function selectWeaponAt(x, y) {
       else { showShopMessage(`コインが足りません（必要: ${getSpecialPrice(k)} / 所持: ${saveData.coins}）`, "#ff6666"); shake(10); flash("#ff6666", 4); }
     } else if (shopTab === "upgrade") {
       if (isUpgradeMaxed(k)) { showShopMessage("この強化は最大レベルです", "#ffcc00"); return; }
-      if (buyUpgrade(k)) { sfx.coin(); showShopMessage(`「${UPGRADES[k].name}」をLv${getUpgradeLevel(k)}に強化！`, "#88ff88"); shake(15); flash(UPGRADES[k].color, 6); }
+      if (buyUpgrade(k)) { sfx.coin(); showShopMessage(UPGRADES[k].fixed ? (shopLastMsg || `「${UPGRADES[k].name}」を購入！`) : `「${UPGRADES[k].name}」をLv${getUpgradeLevel(k)}に強化！`, "#88ff88"); shake(15); flash(UPGRADES[k].color, 6); }
       else { showShopMessage(`コインが足りません（必要: ${getUpgradePrice(k)} / 所持: ${saveData.coins}）`, "#ff6666"); shake(10); flash("#ff6666", 4); }
     } else {
       if (ownsCosmetic(k)) {
@@ -2702,6 +2716,43 @@ function fireHeartBreak() {
   addBullet({ vx:0, vy:-18, size: 18+p*3, damage: 10+p*3, type:"heartbreak", pierce: 999, hue: 350, trail:true, spin: 0 });
   sfx.shootHeavy(); shake(10); flash("#ff0044", 8); chroma(10);
 }
+let echoes = [], moneyShots = 0;
+function nearestEnemy(x, y) { let n = null, d0 = Infinity; for (const e of enemies) { const d = Math.hypot(e.x-x, e.y-y); if (d < d0) { n = e; d0 = d; } } return n; }
+function fireMirror() {
+  const p = pw("mirror"), R = 110+p*15; let n = 0;
+  for (let i = enemyBullets.length-1; i >= 0 && n < 40; i--) {
+    const b = enemyBullets[i];
+    if (Math.hypot(b.x-player.x, b.y-player.y) < R) {
+      enemyBullets.splice(i, 1); n++;
+      const t = nearestEnemy(b.x, b.y), a = t ? Math.atan2(t.y-b.y, t.x-b.x) : -Math.PI/2;
+      bullets.push({ x:b.x, y:b.y, vx:Math.cos(a)*15, vy:Math.sin(a)*15, size:6, damage: 3+p*.9+level*.2, hue:190, life:120, trail:true });
+    }
+  }
+  shockwaves.push({ x:player.x, y:player.y, radius:10, maxRadius:R, life:14, color:"191,239,255" });
+  if (n > 0) { showDamage(player.x, player.y-30, `REFLECT x${n}`, "#bfefff"); sfx.tap(); }
+}
+function fireMoneyGun() {
+  const p = pw("moneygun"); let dmg = .6;
+  if ((saveData.coins || 0) >= 1) { saveData.coins -= 1; if (++moneyShots % 25 === 0) writeSave(); dmg = 3 + p*.8 + Math.min(10, Math.log10((saveData.coins || 0)+1)*2.5); }
+  addBullet({ vx:(Math.random()-.5)*1.2, vy:-17, size:7+p, damage:dmg, hue:50, trail:true });
+  if (time % 3 === 0) sfx.coin && sfx.coin();
+}
+function fireDice() {
+  const p = pw("dice"), roll = 1+Math.floor(Math.random()*6);
+  addBullet({ vx:0, vy:-12, size:9+roll, damage:(1.6+p*.5)*roll, type:"dice", roll, hue:roll*55, trail:true });
+  showDamage(player.x, player.y-30, "🎲 " + roll, roll === 6 ? "#ffd700" : "#ffffff");
+  sfx.shoot();
+}
+function fireBerserk() {
+  const p = pw("berserk"), lost = 1 - Math.max(0, player.hp)/player.maxHp, m = 1 + lost*3.5, c = 1 + Math.floor(level/5) + Math.floor(lost*3);
+  for (let i = 0; i < c; i++) { const a = -Math.PI/2 + (i-(c-1)/2)*.12; addBullet({ vx:Math.cos(a)*18, vy:Math.sin(a)*18, size:5+p+lost*4, damage:(1.5+p*.5)*m, hue:(lost > .5 ? 0 : 20), trail:true }); }
+  if (time % 4 === 0) sfx.shoot();
+}
+function fireEcho() {
+  const p = pw("echo");
+  addBullet({ vx:0, vy:-16, size:7, damage:2+p*.7, type:"echo", hue:210, trail:true });
+  sfx.shoot();
+}
 function fireDetermination() {
   const p = pw("determination");
   determinationActive = 180+p*30;
@@ -2852,6 +2903,15 @@ function updateJoJoWeapons() {
       if (mudaRushTimer % 3 === 0) flash("#ffcc00", 2);
       shake(3);
       if (e.hp <= 0) { killEnemy(enemies.indexOf(e)); mudaRushEnemy = null; }
+    }
+  }
+  for (let i = echoes.length-1; i >= 0; i--) {
+    const q = echoes[i]; q.t--;
+    if (q.t % 6 === 0) burst(q.x, q.y, 2, "#99ccff");
+    if (q.t <= 0) {
+      shockwaves.push({ x:q.x, y:q.y, radius:8, maxRadius:q.r, life:18, color:"153,204,255" }); burst(q.x, q.y, 40, "#99ccff"); shake(12);
+      for (let j = enemies.length-1; j >= 0; j--) { const o = enemies[j]; if (o && Math.hypot(o.x-q.x, o.y-q.y) < q.r+o.r) { o.hp -= q.dmg; showBigDamage(o.x, o.y, q.dmg, "#99ccff"); if (o.hp <= 0) killEnemy(j); } }
+      echoes.splice(i, 1);
     }
   }
   if (madeInHeavenTimer > 0) {
@@ -3006,6 +3066,11 @@ function fireWeapon(k) {
   else if (k === "gaster") { fireGaster(); weaponCools[k] = Math.max(25, (75-level*3-cdr*2)*sm); }
   else if (k === "heartbreak") { fireHeartBreak(); weaponCools[k] = Math.max(8, (25-Math.floor(level/2)-cdr)*sm); }
   else if (k === "determination") { fireDetermination(); weaponCools[k] = Math.max(60, 180-level*3-cdr*2); }
+  else if (k === "mirror") { fireMirror(); weaponCools[k] = Math.max(10, (28-p*1.5)*sm); }
+  else if (k === "moneygun") { fireMoneyGun(); weaponCools[k] = Math.max(2, (9-Math.floor(level/3)-cdr)*sm); }
+  else if (k === "dice") { fireDice(); weaponCools[k] = Math.max(5, (16-Math.floor(level/2)-cdr)*sm); }
+  else if (k === "berserk") { fireBerserk(); weaponCools[k] = Math.max(2, (10-Math.round((1-Math.max(0, player.hp)/player.maxHp)*7)-cdr)*sm); }
+  else if (k === "echo") { fireEcho(); weaponCools[k] = Math.max(3, (13-Math.floor(level/2)-cdr)*sm); }
 }
 function shoot() {
   if (!selectedWeapon && activeWeapons.length === 0) return;
@@ -3014,9 +3079,10 @@ function shoot() {
   if (activeWeapons.includes("lightning") || selectedWeapon === "lightning") updateLightning();
   if (activeWeapons.includes("chainsaw") || selectedWeapon === "chainsaw") { if (time % 8 === 0) fireChainsaw(); }
 }
-let reviveUsed = 0;
+let reviveUsed = 0, runShield = 0;
 function damagePlayer(amount, inv) {
   if (gameOver || player.invincible > 0) return;
+  if (runShield > 0) { runShield--; player.invincible = 90; showBigDamage(player.x, player.y-40, "BARRIER BLOCK!", "#66ccff"); shockwaves.push({ x:player.x, y:player.y, radius:10, maxRadius:200, life:25, color:"102,204,255" }); return; }
   if (challengeOneHit) { sfx.playerHit(); player.hp = 0; gameOver = true; recordGameResult(false); sfx.gameOver(); shake(120); flash("#ffffff", 25); return; }
   const f = amount*getDefenseMult();
   player.hp -= f;
@@ -3440,6 +3506,11 @@ function updateEnemies() {
       else if (b.type === "freeze" || b.type === "iceshard") { e.hp -= dmg; e.slowTimer = (b.slowDuration || 90+level*5); e.slowFactor = Math.max(.12, .42-level*.02); showDamage(e.x, e.y, dmg, "#a3e8ff"); if (b.type === "freeze") cons = true; }
       else if (b.type === "poison") { e.hp -= dmg; e.poisonTime = b.poisonTime; e.poisonDPS = b.poisonDPS; showDamage(e.x, e.y, dmg, "#88ff44"); cons = true; }
       else if (b.type === "crossbow") { e.hp -= dmg; e.bleedTimer = 120; e.bleedDPS = b.bleed || 0.5; showDamage(e.x, e.y, dmg, "#aa6622"); b.pierce--; if (b.pierce <= 0) cons = true; }
+      else if (b.type === "dice") {
+        e.hp -= dmg; showBigDamage(e.x, e.y, dmg, b.roll === 6 ? "#ffd700" : "#ff99cc"); cons = true;
+        if (b.roll === 6) { shockwaves.push({ x:e.x, y:e.y, radius:8, maxRadius:150, life:20, color:"255,215,0" }); burst(e.x, e.y, 50, "#ffd700"); shake(20); for (let q = enemies.length-1; q >= 0; q--) { const o = enemies[q]; if (o && o !== e && Math.hypot(o.x-e.x, o.y-e.y) < 150+o.r) { o.hp -= dmg*.6; if (o.hp <= 0) killEnemy(q); } } }
+      }
+      else if (b.type === "echo") { e.hp -= dmg; showDamage(e.x, e.y, dmg, "#99ccff"); echoes.push({ x:e.x, y:e.y, t:60, dmg:dmg*2.2, r:80+pw("echo")*10 }); cons = true; }
       else if (b.type === "bubble") { if (e.type !== "boss") e.floatTime = b.floatTime; e.hp -= dmg; showDamage(e.x, e.y, dmg, "#aaddff"); cons = true; }
       else if (b.type === "railgun") { if (!b.hitSet) b.hitSet = new Set(); b.hitSet.add(e); e.hp -= dmg; showBigDamage(e.x, e.y, dmg, "#00eeff"); shake(12); flash("#00eeff", 3); chroma(6); hitStopAdd(2); }
       else if (b.type === "vampire") { e.hp -= dmg; showDamage(e.x, e.y, dmg, "#cc0066"); vampireHeal += dmg*(b.stealRatio || 0.3); cons = true; }
@@ -3566,6 +3637,11 @@ function update() {
   if (specialActive > 0) return;
   if (studyQuizActive) return;
   time++; if (time <= 1) reviveUsed = 0;
+  if (time === 1) {
+    runShield = 0; const u = saveData.upgrades || {};
+    if ((u.boostticket || 0) > 0) { u.boostticket--; for (const k of activeWeapons) weaponPower[k] = (weaponPower[k] || 0) + 2; showBigDamage(player.x, player.y-40, "BOOST! 武器+2", "#ff4488"); writeSave(); }
+    if ((u.shieldticket || 0) > 0) { u.shieldticket--; runShield = 1; showDamage(player.x, player.y-70, "🛡 BARRIER READY", "#66ccff"); writeSave(); }
+  }
   rainbowHue = (rainbowHue+3)%360;
   difficulty = Math.min(3, 1+time/1500);
   bgTint = (Math.sin(time*0.02)*30*FX.bgMultiplier + combo*3*FX.bgMultiplier)%360;
@@ -4262,7 +4338,7 @@ function drawShop() {
     ctx.fillText(w.description, MENU_MARGIN+16, y+46);
     if (shopTab === "upgrade") {
       ctx.fillStyle = w.color; ctx.font = "bold 11px Arial";
-      ctx.fillText(`Lv ${getUpgradeLevel(k)} / ${w.maxLevel}`, MENU_MARGIN+16, y+62);
+      ctx.fillText(w.consume ? `所持 ${getUpgradeLevel(k)} / ${w.maxLevel}` : w.fixed ? `プレイ ${getUpgradeLevel(k)}回` : `Lv ${getUpgradeLevel(k)} / ${w.maxLevel}`, MENU_MARGIN+16, y+62);
     }
     ctx.textAlign = "right";
     if (shopTab === "upgrade") {
@@ -5904,7 +5980,7 @@ function canSendGift(){
   if (giftSelectedType === "coin") return saveData.coins >= giftSelectedCoin && giftSelectedCoin > 0;
   if (giftSelectedType === "weapon") {
     if (!giftSelectedWeapon) return false;
-    return saveData.ownedWeapons.filter(k => k === giftSelectedWeapon).length > 1;
+    return !!weapons[giftSelectedWeapon] && weapons[giftSelectedWeapon].price > 0 && saveData.ownedWeapons.includes(giftSelectedWeapon);
   }
   return false;
 }
@@ -5912,6 +5988,7 @@ function canSendGift(){
 function sendGift(){
   if (!canSendGift()) return;
   const gift = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     from: saveData.userName,
     to: giftTargetUser.trim(),
     type: giftSelectedType,
@@ -5931,7 +6008,7 @@ function sendGift(){
     }
   }
   saveData.giftSent.push(gift);
-  if (gift.to === saveData.userName) saveData.giftInbox.push(gift);
+  giftLastCode = makeGiftCode(gift); giftCopied = false;
   try {
     const SHARED_KEY = "neonBulletGiftInbox_v1";
     const raw = localStorage.getItem(SHARED_KEY);
@@ -5946,25 +6023,71 @@ function sendGift(){
   giftScreen = "sent";
 }
 
+let giftLastCode = "", giftCopied = false;
+function makeGiftCode(g){
+  try { return "NBG1-" + btoa(unescape(encodeURIComponent(JSON.stringify({ i:g.id, f:g.from, t:g.to, y:g.type, v:g.value, m:g.message })))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); } catch (e) { return ""; }
+}
+function parseGiftCode(c){
+  try {
+    c = (c || "").trim(); if (c.indexOf("NBG1-") !== 0) return null;
+    let b = c.slice(5).replace(/-/g,"+").replace(/_/g,"/"); while (b.length % 4) b += "=";
+    const o = JSON.parse(decodeURIComponent(escape(atob(b))));
+    if (!o.i || !o.y) return null;
+    return { id:o.i, from:o.f, to:o.t, type:o.y, value:o.v, message:o.m || "", date:Date.now() };
+  } catch (e) { return null; }
+}
+function applyGift(g){
+  if (!Array.isArray(saveData.redeemedGifts)) saveData.redeemedGifts = [];
+  if (saveData.redeemedGifts.includes(g.id)) return "already";
+  if (saveData.giftSent.some(x => x.id === g.id)) return "own";
+  if (g.type === "coin") { saveData.coins = (saveData.coins || 0) + Math.max(0, Math.min(100000, Math.floor(+g.value || 0))); }
+  else if (g.type === "weapon" && weapons[g.value]) {
+    if (!saveData.ownedWeapons.includes(g.value)) saveData.ownedWeapons.push(g.value);
+    else saveData.coins = (saveData.coins || 0) + Math.floor(getWeaponPrice(g.value)/2);
+  } else return "bad";
+  saveData.redeemedGifts.push(g.id); if (saveData.redeemedGifts.length > 300) saveData.redeemedGifts.shift();
+  saveData.giftInbox.push(g); writeSave(); return "ok";
+}
 function receiveGifts(){
   try {
     const SHARED_KEY = "neonBulletGiftInbox_v1";
     const raw = localStorage.getItem(SHARED_KEY);
     if (!raw) return;
-    let box = JSON.parse(raw);
-    const mine = box.filter(g => g.to === saveData.userName);
-    if (mine.length === 0) return;
-    for (const g of mine) {
-      if (g.type === "coin") saveData.coins = (saveData.coins || 0) + g.value;
-      else if (g.type === "weapon") { if (!saveData.ownedWeapons.includes(g.value)) saveData.ownedWeapons.push(g.value); }
-      saveData.giftInbox.push(g);
-    }
-    box = box.filter(g => g.to !== saveData.userName);
+    let box = JSON.parse(raw), n = 0;
+    const me = (saveData.userName || "").toLowerCase();
+    for (const g of box) if ((g.to || "").toLowerCase() === me && applyGift(g) === "ok") n++;
+    box = box.filter(g => (g.to || "").toLowerCase() !== me);
     localStorage.setItem(SHARED_KEY, JSON.stringify(box));
-    writeSave();
-    showGiftReceivePopup(mine.length);
+    if (n > 0) showGiftReceivePopup(n);
   } catch (e) {}
 }
+function redeemGiftCodePrompt(){
+  const c = prompt("もらったギフトコードを貼り付けてね (NBG1- から始まる文字)");
+  if (!c) return;
+  const g = parseGiftCode(c);
+  if (!g) { alert("コードが正しくありません"); return; }
+  if ((g.to || "").toLowerCase() !== (saveData.userName || "").toLowerCase()) { alert("このギフトは「" + g.to + "」さん宛てです(あなたの名前: " + saveData.userName + ")"); return; }
+  const r = applyGift(g);
+  if (r === "ok") { showGiftReceivePopup(1); sfx.coin(); }
+  else alert(r === "already" ? "このコードは使用済みです" : r === "own" ? "自分で送ったギフトは受け取れません" : "このギフトは受け取れませんでした");
+}
+function copyGiftCode(){
+  const c = giftLastCode;
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(c).then(() => { giftCopied = true; }).catch(() => prompt("コピーして相手に送ってね", c));
+  else prompt("コピーして相手に送ってね", c);
+}
+let giftDrag = null;
+function giftScrollMax(){
+  if (inboxScreen) return Math.max(0, saveData.giftInbox.length*100 - (H-150-90));
+  if (giftScreen === "weapon") return Math.max(0, [...new Set(saveData.ownedWeapons)].filter(k => weapons[k] && weapons[k].price > 0).length*64 - (H-120-170));
+  return 0;
+}
+function giftScrollSet(v){ const n = Math.max(0, Math.min(giftScrollMax(), v)); if (inboxScreen) inboxScroll = n; else giftWeaponScroll = n; }
+canvas.addEventListener("touchmove", e => { if (giftDrag && (giftScreen === "weapon" || inboxScreen)) { e.preventDefault(); giftScrollSet(giftDrag.s + giftDrag.y - getPointerPosition(e).y); } }, { passive:false });
+canvas.addEventListener("mousemove", e => { if (giftDrag && (e.buttons & 1)) giftScrollSet(giftDrag.s + giftDrag.y - getPointerPosition(e).y); });
+window.addEventListener("mouseup", () => { giftDrag = null; });
+window.addEventListener("touchend", () => { giftDrag = null; });
+canvas.addEventListener("wheel", e => { if (giftScreen === "weapon" || inboxScreen) { e.preventDefault(); giftScrollSet((inboxScreen ? inboxScroll : giftWeaponScroll) + e.deltaY); } }, { passive:false });
 
 let giftReceivePopup = null;
 function showGiftReceivePopup(n){ giftReceivePopup = { timer: 240, count: n }; }
@@ -6063,9 +6186,9 @@ function drawGiftScreen(){
     ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
     ctx.fillText("送る武器を選択", W/2, 130);
     ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "11px Arial";
-    ctx.fillText("※ 同じ武器を2個以上所持している場合のみ送れます", W/2, 150);
+    ctx.fillText("※ 購入・ガチャで手に入れた武器を送れます(送ると手放します)", W/2, 150);
     const list = saveData.ownedWeapons.slice();
-    const unique = [...new Set(list)];
+    const unique = [...new Set(list)].filter(k => weapons[k] && weapons[k].price > 0);
     const LT = 170, IH = 56, GAP = 8;
     for (let i = 0; i < unique.length; i++) {
       const k = unique[i];
@@ -6073,7 +6196,7 @@ function drawGiftScreen(){
       const y = LT + i*(IH+GAP) - giftWeaponScroll;
       if (y+IH < LT || y > H-120) continue;
       const w = weapons[k];
-      const can = cnt > 1;
+      const can = true;
       const col = can ? w.color : "#555";
       ctx.shadowBlur = can ? 15 : 0; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = 3;
       ctx.strokeRect(24, y, W-48, IH);
@@ -6086,14 +6209,14 @@ function drawGiftScreen(){
       ctx.fillText(w.description, 40, y+42);
       ctx.textAlign = "right";
       ctx.fillStyle = can ? "#ffd700" : "#666"; ctx.font = "bold 14px Arial";
-      ctx.fillText(`所持: ${cnt}`, W-40, y+34);
+      ctx.fillText(giftSelectedWeapon === k ? "✔ 選択中" : "タップで選択", W-40, y+34);
       ctx.textAlign = "center";
     }
     if (giftSelectedWeapon) {
       ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
       ctx.fillText(`選択中: ${weapons[giftSelectedWeapon].name}`, W/2, H-90);
     }
-    const canGo = giftSelectedWeapon && saveData.ownedWeapons.filter(k => k === giftSelectedWeapon).length > 1;
+    const canGo = canSendGift();
     const bw2 = 140, bh2 = 50, by2 = H-70;
     const yx = W/2 - bw2 - 8, nx = W/2 + 8;
     ctx.shadowBlur = canGo ? 20 : 0; ctx.shadowColor = "#88ff88"; ctx.strokeStyle = canGo ? "#88ff88" : "#555"; ctx.lineWidth = 3;
@@ -6161,7 +6284,7 @@ function drawGiftScreen(){
     ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.font = "13px Arial";
     ctx.fillText(`送信先: ${giftTargetUser}`, W/2, 360);
     ctx.fillText(`内容: ${giftSelectedType === "coin" ? "🪙 " + giftSelectedCoin : "⚔️ " + weapons[giftSelectedWeapon].name}`, W/2, 385);
-    const canGo = giftMessage.trim().length > 0;
+    const canGo = true;
     const bw2 = 140, bh2 = 50, by2 = 430;
     const yx = W/2 - bw2 - 8, nx = W/2 + 8;
     ctx.shadowBlur = canGo ? 20 : 0; ctx.shadowColor = "#ffd700"; ctx.strokeStyle = canGo ? "#ffd700" : "#555"; ctx.lineWidth = 3;
@@ -6187,6 +6310,9 @@ function drawGiftScreen(){
     ctx.fillText(txt, W/2, 325);
     ctx.fillStyle = "#fff"; ctx.font = "14px Arial";
     ctx.fillText("をプレゼントしました！", W/2, 355);
+    ctx.shadowBlur = 15; ctx.shadowColor = "#ffd700"; ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 2;
+    ctx.strokeRect((W-260)/2, 368, 260, 40); ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
+    ctx.fillText(giftCopied ? "✔ コピーしました" : "📋 ギフトコードをコピー", W/2, 394);
     const bw = 200, bh = 50, bx = (W-bw)/2, by = 420;
     ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
     ctx.strokeRect(bx, by, bw, bh);
@@ -6212,7 +6338,7 @@ function drawInbox(){
   for (let i = 0; i < saveData.giftInbox.length; i++) {
     const g = saveData.giftInbox[i];
     const y = LT + i*(IH+GAP) - inboxScroll;
-    if (y+IH < LT || y > H-100) continue;
+    if (y+IH < LT || y > H-150) continue;
     ctx.shadowBlur = 15; ctx.shadowColor = "#ffd700"; ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 2;
     ctx.strokeRect(24, y, W-48, IH);
     ctx.fillStyle = "rgba(255,215,0,.06)"; ctx.fillRect(24, y, W-48, IH);
@@ -6223,9 +6349,12 @@ function drawInbox(){
     const txt = g.type === "coin" ? `🪙 ${g.value} コイン` : `⚔️ ${weapons[g.value] ? weapons[g.value].name : g.value}`;
     ctx.fillText(txt, 40, y+48);
     ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.font = "12px Arial";
-    ctx.fillText(g.message, 40, y+70);
+    ctx.fillText(g.message || "", 40, y+70);
     ctx.textAlign = "center";
   }
+  ctx.shadowBlur = 15; ctx.shadowColor = "#ffd700"; ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 2;
+  ctx.strokeRect((W-260)/2, H-140, 260, 40); ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
+  ctx.fillText("🔑 ギフトコードを入力して受け取る", W/2, H-114);
   const bby = H-45, bbw = 200, bbx = (W-bbw)/2;
   ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
   ctx.strokeRect(bbx, bby-22, bbw, 44);
@@ -6301,7 +6430,9 @@ function giftStart(e){
     e.stopImmediatePropagation(); e.preventDefault();
     initAudio();
     const p = getPointerPosition(e);
+    giftDrag = { y: p.y, s: inboxScreen ? inboxScroll : giftWeaponScroll };
     if (inboxScreen) {
+      if (p.x >= (W-260)/2 && p.x <= (W+260)/2 && p.y >= H-140 && p.y <= H-100) { redeemGiftCodePrompt(); return; }
       const bby = H-45, bbw = 200, bbx = (W-bbw)/2;
       if (p.x >= bbx && p.x <= bbx+bbw && p.y >= bby-22 && p.y <= bby+22) { sfx.tap(); inboxScreen = false; }
       return;
@@ -6345,25 +6476,26 @@ function giftStart(e){
     }
     if (giftScreen === "weapon") {
       const list = saveData.ownedWeapons.slice();
-      const unique = [...new Set(list)];
+      const unique = [...new Set(list)].filter(k => weapons[k] && weapons[k].price > 0);
       const LT = 170, IH = 56, GAP = 8;
       for (let i = 0; i < unique.length; i++) {
         const k = unique[i];
         const cnt = list.filter(x => x === k).length;
         const y = LT + i*(IH+GAP) - giftWeaponScroll;
         if (p.x >= 24 && p.x <= W-24 && p.y >= y && p.y <= y+IH) {
-          if (cnt > 1) { giftSelectedWeapon = k; sfx.tap(); }
+          { giftSelectedWeapon = k; sfx.tap(); }
           return;
         }
       }
       const bw2 = 140, bh2 = 50, by2 = H-70;
       const yx = W/2 - bw2 - 8, nx = W/2 + 8;
-      const canGo = giftSelectedWeapon && saveData.ownedWeapons.filter(k => k === giftSelectedWeapon).length > 1;
+      const canGo = canSendGift();
       if (p.x >= yx && p.x <= yx+bw2 && p.y >= by2 && p.y <= by2+bh2) { if (canGo) { giftScreen = "target"; sfx.tap(); } return; }
       if (p.x >= nx && p.x <= nx+bw2 && p.y >= by2 && p.y <= by2+bh2) { giftScreen = "menu"; sfx.tap(); return; }
       return;
     }
     if (giftScreen === "target") {
+      if (p.x >= (W-320)/2 && p.x <= (W+320)/2 && p.y >= 200 && p.y <= 260) { const v = prompt("送り先のユーザー名", giftTargetUser); if (v !== null) giftTargetUser = v.slice(0, 12); return; }
       const bw2 = 140, bh2 = 50, by2 = 320;
       const yx = W/2 - bw2 - 8, nx = W/2 + 8;
       const canGo = giftTargetUser.trim().length > 0;
@@ -6372,14 +6504,16 @@ function giftStart(e){
       return;
     }
     if (giftScreen === "message") {
+      if (p.x >= (W-340)/2 && p.x <= (W+340)/2 && p.y >= 200 && p.y <= 320) { const v = prompt("メッセージ(空でもOK)", giftMessage); if (v !== null) giftMessage = v.slice(0, 80); return; }
       const bw2 = 140, bh2 = 50, by2 = 430;
       const yx = W/2 - bw2 - 8, nx = W/2 + 8;
-      const canGo = giftMessage.trim().length > 0;
+      const canGo = true;
       if (p.x >= yx && p.x <= yx+bw2 && p.y >= by2 && p.y <= by2+bh2) { if (canGo) sendGift(); return; }
       if (p.x >= nx && p.x <= nx+bw2 && p.y >= by2 && p.y <= by2+bh2) { giftScreen = "target"; sfx.tap(); return; }
       return;
     }
     if (giftScreen === "sent") {
+      if (p.x >= (W-260)/2 && p.x <= (W+260)/2 && p.y >= 368 && p.y <= 408) { copyGiftCode(); return; }
       const bw = 200, bh = 50, bx = (W-bw)/2, by = 420;
       if (p.x >= bx && p.x <= bx+bw && p.y >= by && p.y <= by+bh) { giftScreen = "none"; sfx.tap(); }
       return;
@@ -6402,7 +6536,7 @@ window.addEventListener("keydown", (e) => {
     e.stopImmediatePropagation();
     if (e.key === "Enter") {
       if (giftScreen === "target" && giftTargetUser.trim().length > 0) { giftScreen = "message"; sfx.tap(); }
-      else if (giftScreen === "message" && giftMessage.trim().length > 0) sendGift();
+      else if (giftScreen === "message" && true) sendGift();
     } else if (e.key === "Escape") {
       giftScreen = giftScreen === "target" ? "menu" : "target";
     } else if (e.key === "Backspace") {
