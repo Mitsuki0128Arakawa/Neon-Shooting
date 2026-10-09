@@ -24,7 +24,7 @@ canvas {
   50% { border-color: #ff00ff; }
 }
 #loading { position: fixed; color: #00ffcc; font-size: 20px; }
-#nameInput {
+#nameInput, #giftCodeInput {
   position: fixed; opacity: 0; pointer-events: none;
   top: 0; left: 0; width: 1px; height: 1px;
   z-index: 9999;
@@ -35,6 +35,7 @@ canvas {
 <div id="loading">LOADING...</div>
 <canvas id="game" width="480" height="720"></canvas>
 <input id="nameInput" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+<input id="giftCodeInput" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 <script>
 "use strict";
 
@@ -203,7 +204,6 @@ function startSynthBGM() {
   bgmCurrentStep = 0;
   bgmSchedulerId = setInterval(bgmScheduler, 25);
 }
-/* MP3 BGM (index.html と同じフォルダの Attack.mp3 を再生) */
 const BGM_FILE = "Attack.mp3";
 let bgmAudio = null, bgmMp3Failed = false;
 function applyMp3Volume() { const v = bgmEnabled ? Math.max(0, Math.min(1, bgmVolume)) : 0; if (bgmAudio) bgmAudio.volume = v; if (typeof bossAudio !== "undefined" && bossAudio) bossAudio.volume = v; }
@@ -220,7 +220,6 @@ function startBGM() {
   applyMp3Volume();
   const p = bgmAudio.play();
   if (p && p.catch) p.catch(() => {
-    /* 自動再生ブロック時は次のタップで再試行 */
     const retry = () => { if (bgmAudio) bgmAudio.play().catch(()=>{}); window.removeEventListener("pointerdown", retry, true); window.removeEventListener("keydown", retry, true); };
     window.addEventListener("pointerdown", retry, true);
     window.addEventListener("keydown", retry, true);
@@ -230,8 +229,6 @@ function setBGMEnabled(v) { bgmEnabled = v; if (bgmGain) bgmGain.gain.value = bg
 function setSEEnabled(v) { seEnabled = v; if (seGain) seGain.gain.value = seEnabled ? seVolume : 0; }
 function setBGMVolume(v) { bgmVolume = Math.max(0, Math.min(1, v)); if (bgmGain && bgmEnabled) bgmGain.gain.value = bgmVolume; applyMp3Volume(); }
 function setSEVolume(v) { seVolume = Math.max(0, Math.min(1, v)); if (seGain && seEnabled) seGain.gain.value = seVolume; }
-
-/* ボス戦BGM (index.html と同じフォルダに置く) */
 const BOSS_BGM_FILE = "ミッドナイトブレイカー_D__minor__bpm_82.mp3";
 let bossAudio = null;
 let bossBgmOn = false;
@@ -258,7 +255,11 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 document.getElementById("loading").remove();
 const W = canvas.width, H = canvas.height, TAU = Math.PI * 2;
-const SAVE_KEY = "neonBulletSave_v1";
+const SAVE_KEY = "neonBulletSave_v2";
+
+/* 新武器(ショップ購入) */
+const NEW_WEAPON_KEYS = ["yoyo","frisbee","chainSickle","hammer","bat","hulaHoop","eraser","bubbleHorn","karaoke","kendama"];
+
 function createDefaultSave() {
   return {
     highScore: 0, coins: 0, totalCoinsEarned: 0,
@@ -272,13 +273,24 @@ function createDefaultSave() {
     missionProgress: {}, challengeRecords: {},
     studyGrade: 1, studyHighScore: 0, studyClears: 0,
     bgmVolume: 0.35, seVolume: 0.5, bgmEnabled: true, seEnabled: true,
-    userName: "", giftInbox: [], giftSent: []
+    userName: "", giftInbox: [], giftSent: [], redeemedGifts: [],
+    bossClears: 0, bossBestTime: 0,
+    /* 新要素 */
+    hardChallengeDate: null,        /* 高難度チャレンジ購入日 */
+    hardChallengeType: null,        /* 当日のお題ID */
+    hardChallengeDone: false,       /* 当日クリア済み */
+    emergencyUsed: false,           /* 緊急購入(1プレイ1回) */
+    ownedFx: [],                    /* 見た目F */
+    equippedKillFx: "fx_kill_default",
+    equippedTrailFx: "fx_trail_default",
+    equippedAuraFx: "fx_aura_default",
+    equippedSpecialFx: "fx_special_default"
   };
 }
 let saveData = createDefaultSave();
 function loadSave() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(SAVE_KEY) || localStorage.getItem("neonBulletSave_v1");
     if (raw) {
       const p = JSON.parse(raw);
       saveData = { ...createDefaultSave(), ...p };
@@ -289,6 +301,8 @@ function loadSave() {
       for (const k of createDefaultSave().ownedSpecials) if (!saveData.ownedSpecials.includes(k)) saveData.ownedSpecials.push(k);
       if (!saveData.ownedCosmetics) saveData.ownedCosmetics = createDefaultSave().ownedCosmetics;
       for (const k of createDefaultSave().ownedCosmetics) if (!saveData.ownedCosmetics.includes(k)) saveData.ownedCosmetics.push(k);
+      if (!saveData.ownedFx) saveData.ownedFx = [];
+      for (const k of ["fx_kill_default","fx_trail_default","fx_aura_default","fx_special_default"]) if (!saveData.ownedFx.includes(k)) saveData.ownedFx.push(k);
       if (!saveData.equippedTheme) saveData.equippedTheme = "theme_default";
       if (!saveData.equippedColor) saveData.equippedColor = "color_cyan";
       if (!saveData.upgrades) saveData.upgrades = {};
@@ -304,6 +318,7 @@ function loadSave() {
       if (typeof saveData.userName !== "string") saveData.userName = "";
       if (!Array.isArray(saveData.giftInbox)) saveData.giftInbox = [];
       if (!Array.isArray(saveData.giftSent)) saveData.giftSent = [];
+      if (!Array.isArray(saveData.redeemedGifts)) saveData.redeemedGifts = [];
       saveData.ownedWeapons = saveData.ownedWeapons.filter(k => k !== "math");
     }
   } catch (e) { saveData = createDefaultSave(); }
@@ -324,7 +339,7 @@ bgmEnabled = saveData.bgmEnabled; seEnabled = saveData.seEnabled;
 
 /* ========== アップグレード ========== */
 const UPGRADES = {
-  maxhp:      { name: "最大HP +10",       description: "最大HPが10増える",        color: "#00ff66", basePrice: 200, maxLevel: 15, step: 10 },
+  maxhp:      { name: "最大HP +10",       description: "最大HPが10増える(ボス戦は5固定)", color: "#00ff66", basePrice: 200, maxLevel: 15, step: 10 },
   speed:      { name: "移動速度 +5%",     description: "移動速度が5%上がる",      color: "#00ffcc", basePrice: 250, maxLevel: 10, step: 0.05 },
   startlevel: { name: "初期レベル +1",    description: "開始時のレベルが1上がる", color: "#ffcc00", basePrice: 300, maxLevel: 8,  step: 1 },
   coinrate:   { name: "コイン獲得 +10%",  description: "獲得コインが10%増える",   color: "#ffd700", basePrice: 400, maxLevel: 8,  step: 0.10 },
@@ -333,9 +348,9 @@ const UPGRADES = {
   invincible: { name: "無敵時間 +20f",    description: "被弾後の無敵時間UP",      color: "#ffffff", basePrice: 200, maxLevel: 8,  step: 20 },
   slot:       { name: "🎰 コインスロット",  description: "運試し! 最大20倍(平均は元手割れ)", color: "#ffdd00", basePrice: 500, maxLevel: 999999, step: 0, fixed: true },
   boostticket:{ name: "🎫 出撃ブースト券",  description: "次の1戦だけ全武器パワー+2", color: "#ff4488", basePrice: 400, maxLevel: 9, step: 0, fixed: true, consume: true },
-  shieldticket:{ name: "🛡 バリア券",       description: "次の1戦、最初の被弾を無効化", color: "#66ccff", basePrice: 300, maxLevel: 9, step: 0, fixed: true, consume: true },
+  shieldticket:{ name: "🛡 バリア券",       description: "次の1戦、最初の被弾を無効化(ボス戦無効)", color: "#66ccff", basePrice: 300, maxLevel: 9, step: 0, fixed: true, consume: true },
   startpower: { name: "武器パワー +1",    description: "全武器が最初からパワーUP", color: "#ff4488", basePrice: 600, maxLevel: 5,  step: 1 },
-  revive:     { name: "復活 +1回",        description: "死亡時HP半分で復活(1戦ごと)", color: "#ffaa00", basePrice: 1200, maxLevel: 3,  step: 1 },
+  revive:     { name: "復活 +1回",        description: "死亡時HP半分で復活(1戦ごと/ボス戦無効)", color: "#ffaa00", basePrice: 1200, maxLevel: 3,  step: 1 },
   expgain:    { name: "経験値 +10%",      description: "獲得EXPが10%増える",      color: "#66ccff", basePrice: 350, maxLevel: 8,  step: 0.10 },
   dropup:     { name: "ドロップ率 +15%",  description: "アイテムが出やすくなる",  color: "#88ff88", basePrice: 300, maxLevel: 6,  step: 0.15 },
   dashcd:     { name: "ダッシュCD -8%",   description: "ダッシュCD短縮",          color: "#ff6600", basePrice: 250, maxLevel: 8,  step: 0.08 }
@@ -467,6 +482,86 @@ function claimMissionReward(idx) {
   writeSave(); sfx.coin(); return true;
 }
 
+/* ========== 高難度チャレンジ (D) ========== */
+const HARD_CHALLENGES = [
+  { id:"hp1boss", name:"HP1でボスを撃破", desc:"最大HP1。被弾即死", color:"#ff0044" },
+  { id:"noHit3", name:"被弾3回以内で通常クリア", desc:"4回被弾で失敗", color:"#ff6600" },
+  { id:"time3", name:"3分以内にボス撃破", desc:"時間との勝負", color:"#ffcc00" },
+  { id:"solo1", name:"武器1つだけでクリア", desc:"チェンジ不可", color:"#00ffcc" },
+  { id:"nosp", name:"必殺禁止でボス撃破", desc:"E/必殺ボタン封印", color:"#aa66ff" },
+  { id:"fast2", name:"敵弾2倍速でボス撃破", desc:"弾が速い", color:"#ff00ff" }
+];
+let hardChallengeArmed = false;
+function getTodayHardChallenge() {
+  const today = todayStr();
+  if (saveData.hardChallengeDate !== today) {
+    saveData.hardChallengeDate = today;
+    const idx = Math.floor(Math.random() * HARD_CHALLENGES.length);
+    saveData.hardChallengeType = HARD_CHALLENGES[idx].id;
+    saveData.hardChallengeDone = false;
+    writeSave();
+  }
+  return HARD_CHALLENGES.find(c => c.id === saveData.hardChallengeType) || HARD_CHALLENGES[0];
+}
+function canBuyHardChallenge() {
+  const today = todayStr();
+  if (saveData.hardChallengeDate !== today) return true;
+  if (saveData.hardChallengeDone) return false;
+  if (hardChallengeArmed) return false;
+  /* 当日まだ購入していない扱い(armed=false && done=false は未購入) */
+  return saveData.hardChallengeBoughtDate !== today;
+}
+let hardChallengeScreen = false;
+let hardMsg = "";
+function openHardChallenge() {
+  getTodayHardChallenge();
+  hardChallengeScreen = true;
+  hardMsg = "";
+  sfx.tap();
+}
+function buyHardChallenge() {
+  const today = todayStr();
+  if (saveData.coins < 5000) { hardMsg = "コインが足りません(必要 5000)"; shake(10); return; }
+  if (saveData.hardChallengeDone) { hardMsg = "本日はクリア済みです"; return; }
+  if (saveData.hardChallengeBoughtDate === today && !hardChallengeArmed) { hardMsg = "本日は購入済みです"; return; }
+  saveData.coins -= 5000;
+  saveData.hardChallengeBoughtDate = today;
+  hardChallengeArmed = true;
+  writeSave();
+  sfx.coin(); shake(30); flash("#ff0044", 10); chroma(15);
+  hardMsg = "購入! チャレンジ開始で挑戦できます";
+}
+function startHardChallenge() {
+  if (!hardChallengeArmed) { hardMsg = "先に購入してください(5000)"; return; }
+  const c = getTodayHardChallenge();
+  /* 専用設定 */
+  studyMode = false; fusionMode = false; quickMode = false; fusionSelected = [];
+  applyChallenge(null);
+  selectedChallenge = null;
+  /* お題別の強制設定 */
+  hardChallengeState.active = true;
+  hardChallengeState.id = c.id;
+  hardChallengeState.hits = 0;
+  hardChallengeState.startTime = 0;
+  hardChallengeState.lockedWeapons = false;
+  /* 武器/必殺は最新の選択を使う(未選択ならnormal/fireworks) */
+  if (!selectedWeapon) selectedWeapon = "normal";
+  if (!selectedSpecial) selectedSpecial = "fireworks";
+  activeWeapons = [selectedWeapon];
+  weaponMenu = false; specialMenu = false; shopScreen = false;
+  hardChallengeScreen = false;
+  titleScreen = false;
+  startGameWithCurrentSelection();
+  /* 開始直後に反映 */
+  if (c.id === "hp1boss") { player.maxHp = 1; player.hp = 1; }
+  if (c.id === "time3") { hardChallengeState.startTime = time; }
+  if (c.id === "solo1") { hardChallengeState.lockedWeapons = true; }
+  if (c.id === "nosp") { challengeNoSpecials = true; }
+  if (c.id === "fast2") { hardChallengeState.fastBullets = true; }
+  showBigDamage(W/2, H/2, c.name, c.color);
+}
+const hardChallengeState = { active:false, id:null, hits:0, startTime:0, lockedWeapons:false, fastBullets:false };
+
 /* ========== 縛り ========== */
 const CHALLENGES = {
   oneHit:      { name: "一撃死",         description: "被弾1回でゲームオーバー", color: "#ff0044", reward: 500 },
@@ -574,7 +669,7 @@ function answerStudyQuiz(idx) {
     studyBurstGauge = Math.min(STUDY_BURST_MAX, studyBurstGauge + 25);
     flash("#88ff88", 15); chroma(25); shake(40);
     level++; nextExp += 8;
-    player.hp = Math.min(player.maxHp, player.hp + 20);
+    if (!bossMode) player.hp = Math.min(player.maxHp, player.hp + 20);
     burst(player.x, player.y, 80, "#88ff88");
     showBigDamage(player.x, player.y - 50, "LEVEL UP!", "#88ff88");
     showDamage(player.x, player.y - 80, `正解: ${studyCorrectCount}`, "#ffffff");
@@ -591,6 +686,7 @@ let bossKillCount = 0;
 const BOSS_KILL_TARGET = 2;
 let bossMode = false, bossSelected = [], bossSelMsg = 0;
 let bossForm = 1, bossFormT = 0, bossInvT = 0, bossPat = null, bossPatI = -1, bossPatT = 0, bossDrop = 0, bossBeatLast = -1;
+let bossPendingSpell = false;
 let gameClear = false;
 let fusionMode = false, fusionSelected = [], activeWeapons = [], quickMode = false;
 let weaponCools = {};
@@ -605,6 +701,7 @@ let theWorldTimer = 0, mudaRushTimer = 0, mudaRushEnemy = null, madeInHeavenTime
 let determinationActive = 0;
 let boneBarriers = [], gasterBlasters = [], blueAttacks = [];
 let pauseScreen = false, pauseBackToTitleConfirm = false, settingsScreen = false;
+let emergencyMenu = false; /* E: 緊急購入 */
 const SPECIAL_BTN_R = 40, SPECIAL_BTN_X = W - SPECIAL_BTN_R - 20, SPECIAL_BTN_Y = H - SPECIAL_BTN_R - 20;
 const PAUSE_BTN_R = 22, PAUSE_BTN_X = W - PAUSE_BTN_R - 12, PAUSE_BTN_Y = 20 + 16 + 8 + 22;
 const MUTE_BTN_R = 18, MUTE_BTN_X = 20 + MUTE_BTN_R, MUTE_BTN_Y = 230;
@@ -636,6 +733,8 @@ let swordAngle = -Math.PI/2, vampireHeal = 0, weaponPower = {};
 let bullets = [], enemies = [], enemyBullets = [];
 let particles = [], shockwaves = [], stars = [];
 let shootingStars = [], nebulae = [], auroraBands = [], themeParticles = [];
+/* 追加武器の状態 */
+let yoyoStates = [], frisbeeStates = [], chainStates = [], hammerWave = 0, batSwing = 0, hulaAngle = 0, eraserOrbs = [], bubbleHornPuffs = [], karaokeWaves = [], kendamaBalls = [];
 
 /* ========== 武器定義 ========== */
 const weapons = {
@@ -654,13 +753,25 @@ const weapons = {
   spike: { name:"SPIKE", description:"地面から棘", color:"#aabbbb", price:0 },
   swarm: { name:"SWARM", description:"蜂の群れ", color:"#ffcc00", price:0 },
   piano: { name:"PIANO", description:"音符追尾", color:"#ffffff", price:0 },
+  /* 新武器(ショップ購入・強力) */
+  yoyo:        { name:"YOYO",           description:"弧を描いて往復・高威力",       color:"#ff66aa", price:1000 },
+  frisbee:     { name:"FRISBEE",        description:"壁で反射・連続ヒット",         color:"#66ffcc", price:1200 },
+  chainSickle: { name:"CHAIN SICKLE",   description:"引き寄せ斬撃・近接絶大",       color:"#c0c0c0", price:1200 },
+  hammer:      { name:"HAMMER",         description:"振り下ろし衝撃波・範囲大",     color:"#ffaa66", price:1400 },
+  bat:         { name:"BAT",            description:"敵弾打ち返し＋本体ヒット",     color:"#e0c090", price:1200 },
+  hulaHoop:    { name:"HULA HOOP",      description:"密着回転輪・連続ダメージ",     color:"#ff88ff", price:1500 },
+  eraser:      { name:"ERASER",         description:"敵弾消去+反撃弾+本体ダメージ", color:"#ffffff", price:1500 },
+  bubbleHorn:  { name:"BUBBLE HORN",    description:"泡を大量・高威力",             color:"#aaddff", price:1200 },
+  karaoke:     { name:"KARAOKE MIC",    description:"扇状音波・大ダメージ+減速",    color:"#ff99cc", price:1500 },
+  kendama:     { name:"KENDAMA",        description:"跳ねて大ダメージ+スタン",      color:"#c8a06a", price:1500 },
+  /* 既存のガチャ武器 */
   blackhole: { name:"BLACK HOLE", description:"吸引圧縮", color:"#9b59ff", price:400 },
   turret: { name:"SENTRY TURRET", description:"自動タレット", color:"#ff9955", price:300 },
   laser: { name:"LASER BEAM", description:"極太ビーム", color:"#ff00ff", price:350 },
   mine: { name:"MINE LAYER", description:"接触爆発", color:"#dd3333", price:250 },
   railgun: { name:"RAILGUN", description:"貫通超高速", color:"#00eeff", price:500 },
   cluster: { name:"CLUSTER BOMB", description:"分裂子弾", color:"#ccff33", price:400 },
-  vampire: { name:"VAMPIRE", description:"HP回復", color:"#cc0066", price:450 },
+  vampire: { name:"VAMPIRE", description:"HP回復(ボス戦唯一の回復)", color:"#cc0066", price:450 },
   gravity: { name:"GRAVITY WELL", description:"引き寄せ", color:"#8844ff", price:400 },
   sword: { name:"NEON SWORD", description:"扇状近接", color:"#ffffff", price:350 },
   iceshard: { name:"ICE SHARD", description:"拡散氷", color:"#ccefff", price:200 },
@@ -689,14 +800,14 @@ const weapons = {
   goldexperience: { name:"GOLD EXPERIENCE", description:"老化光線", color:"#ffdd44", price:900 },
   killerqueen: { name:"KILLER QUEEN", description:"爆弾化", color:"#ff66aa", price:1100 },
   madeinheaven: { name:"MADE IN HEAVEN", description:"超加速", color:"#ffffff", price:2000 },
-  goldenwind: { name:"GOLDEN WIND", description:"全方位回復", color:"#ffcc44", price:1000 },
+  goldenwind: { name:"GOLDEN WIND", description:"全方位(ボス戦回復なし)", color:"#ffcc44", price:1000 },
   friendship: { name:"KNIFE OF FRIENDSHIP", description:"友のナイフ", color:"#ff66ff", price:800 },
   bonebarrier: { name:"BONE BARRIER", description:"骨の壁", color:"#eeeeee", price:700 },
   greenfire: { name:"GREEN FIREBALL", description:"緑炎追尾", color:"#44ff44", price:700 },
   blueattack: { name:"BLUE ATTACK", description:"静止要求", color:"#4488ff", price:800 },
   gaster: { name:"GASTER BLASTER", description:"頭蓋砲", color:"#ffffff", price:1800 },
   heartbreak: { name:"HEART BREAK", description:"決意の刃", color:"#ff0044", price:1000 },
-  determination: { name:"DETERMINATION", description:"被弾無効", color:"#ff0000", price:1500 },
+  determination: { name:"DETERMINATION", description:"被弾無効(ボス戦無効)", color:"#ff0000", price:1500 },
   mirror: { name:"MIRROR", description:"敵弾を弾き返して攻撃に変える", color:"#bfefff", price:600 },
   moneygun: { name:"MONEY GUN", description:"コインを弾にする(所持金で威力UP)", color:"#ffd700", price:500 },
   dice: { name:"DICE", description:"出目×威力。6で大爆発", color:"#ff99cc", price:400 },
@@ -709,20 +820,20 @@ const specials = {
   theworld: { name: "THE WORLD", description: "10秒時止め", color: "#ffee00", price: 2000 },
   kingcrimson: { name: "KING CRIMSON", description: "時間飛ばし", color: "#cc0044", price: 1500 },
   stickyfingers: { name: "STICKY FINGERS", description: "連続引き裂き", color: "#44aaff", price: 1200 },
-  ger: { name: "GOLD EXPERIENCE REQUIEM", description: "時間巻き戻し", color: "#ffdd00", price: 3000 },
+  ger: { name: "GOLD EXPERIENCE REQUIEM", description: "時間巻き戻し(ボス戦回復なし)", color: "#ffdd00", price: 3000 },
   whitesnake: { name: "WHITE SNAKE", description: "無力化", color: "#aaddff", price: 1800 },
   killerqueen: { name: "KILLER QUEEN", description: "全敵爆弾化", color: "#ff66aa", price: 1400 },
   madeinheaven: { name: "MADE IN HEAVEN", description: "超加速", color: "#ffffff", price: 2200 },
-  goldenwind: { name: "GOLDEN WIND", description: "全回復", color: "#ffcc44", price: 1600 },
+  goldenwind: { name: "GOLDEN WIND", description: "全方位(ボス戦回復なし)", color: "#ffcc44", price: 1600 },
   gasterspecial: { name: "GASTER BLASTER", description: "巨大頭蓋砲", color: "#ffffff", price: 2500 },
-  determinationspecial: { name: "DETERMINATION", description: "全回復無敵", color: "#ff0000", price: 2000 },
+  determinationspecial: { name: "DETERMINATION", description: "全回復無敵(ボス戦回復なし)", color: "#ff0000", price: 2000 },
   heartspecial: { name: "HEART BREAK", description: "無数ハート", color: "#ff0044", price: 1500 },
   bluespecial: { name: "BLUE ATTACK", description: "全体麻痺", color: "#4488ff", price: 1200 },
   bonesspecial: { name: "BONE STORM", description: "骨の嵐", color: "#eeeeee", price: 1300 },
   knowledgeburst: { name: "KNOWLEDGE BURST", description: "知識爆発", color: "#66ccff", price: 0 }
 };
 const SPECIAL_ORDER = Object.keys(specials);
-function getWeaponPrice(k) { return weapons[k] ? (weapons[k].price || 0) * 2 : 0; }
+function getWeaponPrice(k) { return weapons[k] ? (weapons[k].price || 0) : 0; }
 function getSpecialPrice(k) { return specials[k] ? (specials[k].price || 0) : 0; }
 function isFreeWeapon(k) { return getWeaponPrice(k) === 0; }
 function isFreeSpecial(k) { return getSpecialPrice(k) === 0; }
@@ -734,7 +845,7 @@ function isPowerThreshold(lv) { return lv > 0 && lv % 3 === 0; }
 function buyWeapon(k) { const p = getWeaponPrice(k); if (ownsWeapon(k)) return false; if (saveData.coins < p) return false; saveData.coins -= p; saveData.ownedWeapons.push(k); writeSave(); return true; }
 function buySpecial(k) { const p = getSpecialPrice(k); if (ownsSpecial(k)) return false; if (saveData.coins < p) return false; saveData.coins -= p; saveData.ownedSpecials.push(k); writeSave(); return true; }
 
-/* ========== 見た目 ========== */
+/* ========== 見た目 (F: 追加) ========== */
 const cosmetics = {
   theme_default: { name:"デフォルト空間", description:"星空・シアン", color:"#00ffcc", price:0, kind:"theme" },
   theme_sakura: { name:"桜テーマ", description:"桜色の夜空", color:"#ff8fd0", price:400, kind:"theme" },
@@ -755,6 +866,44 @@ const cosmetics = {
   color_crimson: { name:"クリムゾン", description:"カラー変更", color:"#dd0033", price:700, kind:"color" },
   color_platinum: { name:"プラチナ", description:"カラー変更", color:"#e8f0ff", price:1000, kind:"color" }
 };
+/* F: 追加エフェクト */
+const FX_ITEMS = {
+  fx_kill_default: { name:"撃破: 標準", desc:"デフォルトの爆発", color:"#ff0088", price:0, kind:"kill" },
+  fx_kill_gold: { name:"撃破: 黄金爆発", desc:"金の破片が舞う", color:"#ffd700", price:500, kind:"kill" },
+  fx_kill_rainbow: { name:"撃破: 虹", desc:"虹色の粒子", color:"#ff00ff", price:800, kind:"kill" },
+  fx_kill_void: { name:"撃破: 虚無", desc:"黒い渦に消える", color:"#9b59ff", price:1200, kind:"kill" },
+  fx_kill_sakura: { name:"撃破: 桜吹雪", desc:"桜の花びら", color:"#ff8fd0", price:1000, kind:"kill" },
+  fx_trail_default: { name:"弾: 標準", desc:"デフォルトの軌跡", color:"#00ffcc", price:0, kind:"trail" },
+  fx_trail_flame: { name:"弾: 炎", desc:"燃え上がる軌跡", color:"#ff6600", price:500, kind:"trail" },
+  fx_trail_ice: { name:"弾: 氷結", desc:"凍てつく軌跡", color:"#a3e8ff", price:500, kind:"trail" },
+  fx_trail_star: { name:"弾: 星屑", desc:"キラキラ星", color:"#ffee44", price:800, kind:"trail" },
+  fx_trail_lightning: { name:"弾: 電撃", desc:"バチバチ", color:"#66e0ff", price:1000, kind:"trail" },
+  fx_aura_default: { name:"オーラ: 標準", desc:"デフォルト", color:"#00ffcc", price:0, kind:"aura" },
+  fx_aura_fire: { name:"オーラ: 火柱", desc:"燃える", color:"#ff4400", price:600, kind:"aura" },
+  fx_aura_ice: { name:"オーラ: 冷気", desc:"凍気", color:"#a3e8ff", price:600, kind:"aura" },
+  fx_aura_holo: { name:"オーラ: ホロ", desc:"虹色の揺らぎ", color:"#ff00ff", price:1000, kind:"aura" },
+  fx_aura_void: { name:"オーラ: 虚無", desc:"黒いオーラ", color:"#9b59ff", price:1500, kind:"aura" },
+  fx_special_default: { name:"必殺: 標準", desc:"デフォルト", color:"#ff88ff", price:0, kind:"special" },
+  fx_special_shock: { name:"必殺: 衝撃波", desc:"広がる波紋", color:"#00eeff", price:800, kind:"special" },
+  fx_special_rainbow: { name:"必殺: 虹", desc:"虹色の奔流", color:"#ff00ff", price:1200, kind:"special" },
+  fx_special_black: { name:"必殺: ブラックアウト", desc:"画面が暗転", color:"#222222", price:1500, kind:"special" },
+  fx_special_gold: { name:"必殺: 黄金", desc:"黄金の輝き", color:"#ffd700", price:2000, kind:"special" }
+};
+const FX_ORDER = Object.keys(FX_ITEMS);
+function getFxPrice(k) { return FX_ITEMS[k] ? FX_ITEMS[k].price : 0; }
+function ownsFx(k) { return saveData.ownedFx.includes(k); }
+function isFreeFx(k) { return getFxPrice(k) === 0; }
+function getShopFx(kind) { return FX_ORDER.filter(k => FX_ITEMS[k].kind === kind && !isFreeFx(k)).sort((a,b) => getFxPrice(a) - getFxPrice(b)); }
+function buyFx(k) { const p = getFxPrice(k); if (ownsFx(k)) return false; if (saveData.coins < p) return false; saveData.coins -= p; saveData.ownedFx.push(k); writeSave(); return true; }
+function equipFx(k) {
+  if (!ownsFx(k)) return;
+  const kind = FX_ITEMS[k].kind;
+  if (kind === "kill") saveData.equippedKillFx = k;
+  else if (kind === "trail") saveData.equippedTrailFx = k;
+  else if (kind === "aura") saveData.equippedAuraFx = k;
+  else if (kind === "special") saveData.equippedSpecialFx = k;
+  writeSave();
+}
 const COSMETIC_ORDER = Object.keys(cosmetics);
 function getCosmeticPrice(k) { return cosmetics[k] ? (cosmetics[k].price || 0) : 0; }
 function isFreeCosmetic(k) { return getCosmeticPrice(k) === 0; }
@@ -909,13 +1058,20 @@ function shake(a) { screenShake = Math.max(screenShake, a*FX.shakeMultiplier); }
 function hitStopAdd(f) { hitStop = Math.max(hitStop, Math.floor(f*FX.hitStopMultiplier)); }
 function flash(c, f) { if (FX.flashMultiplier <= 0.01) return; flashScreen = Math.max(flashScreen, Math.floor(f*FX.flashMultiplier)); flashColor = c || "#ffffff"; }
 function chroma(a) { if (FX.chromaMultiplier <= 0.01) return; chromaOffset = Math.max(chromaOffset, a*FX.chromaMultiplier); }
+/* F: 撃破エフェクト別の粒子 */
 function burst(x, y, count, color) {
   const n = Math.floor(count*FX.particleMultiplier);
+  const killFx = saveData.equippedKillFx || "fx_kill_default";
   for (let i = 0; i < n; i++) {
     const a = Math.random()*TAU, s = 1+Math.random()*6;
-    particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 25+Math.random()*25, color, size: 2+Math.random()*3 });
+    let c = color, sz = 2+Math.random()*3;
+    if (killFx === "fx_kill_gold") c = Math.random() < .7 ? "#ffd700" : "#fff6a0";
+    else if (killFx === "fx_kill_rainbow") c = `hsl(${Math.random()*360},100%,65%)`;
+    else if (killFx === "fx_kill_void") c = Math.random() < .6 ? "#9b59ff" : "#222";
+    else if (killFx === "fx_kill_sakura") c = `hsl(${330+Math.random()*30},90%,80%)`, sz = 3+Math.random()*3;
+    particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 25+Math.random()*25, color: c, size: sz });
   }
-  if (particles.length > 600) particles.splice(0, particles.length-600);
+  if (particles.length > 700) particles.splice(0, particles.length-700);
 }
 function showDamage(x, y, amount, color) {
   if (typeof amount === "number") {
@@ -933,6 +1089,7 @@ function showDamage(x, y, amount, color) {
 function showBigDamage(x, y, amount, color) {
   damageNumbers.push({ x, y, vy: -3, life: 70, text: typeof amount === "number" ? Math.round(amount*10)/10 : amount, color: color||"#ffffff", scale: 2.2 });
 }
+function healPlayer(amount) { if (bossMode) return; player.hp = Math.min(player.maxHp, player.hp + amount); }
 
 /* ========== 入力 ========== */
 let touchX = null, touchY = null, menuStartY = 0, menuDragged = false;
@@ -954,7 +1111,7 @@ function specialMenuContentHeight() { return getAvailableSpecials().length*(MENU
 function specialMenuMaxScroll() { return Math.max(0, specialMenuContentHeight() - specialMenuViewHeight()); }
 function shopViewHeight() { return (H-70) - (SHOP_TAB_Y + SHOP_TAB_H + 20); }
 function shopContentHeight() {
-  const l = shopTab === "weapon" ? getShopWeapons() : shopTab === "special" ? getShopSpecials() : shopTab === "upgrade" ? UPGRADE_ORDER : getShopCosmetics();
+  const l = shopTab === "weapon" ? getShopWeapons() : shopTab === "special" ? getShopSpecials() : shopTab === "upgrade" ? UPGRADE_ORDER : shopTab === "cosmetic" ? getShopCosmetics() : FX_ORDER.filter(k=>FX_ITEMS[k].kind === shopFxKind && !isFreeFx(k));
   return l.length*(MENU_ITEM_HEIGHT+MENU_GAP) - MENU_GAP;
 }
 function shopMaxScroll() { return Math.max(0, shopContentHeight() - shopViewHeight()); }
@@ -962,7 +1119,6 @@ function p_inRange(px, py, x, y, w, h) { return px >= x && px <= x+w && py >= y 
 function p_inSpecialBtn(px, py) { const dx = px-SPECIAL_BTN_X, dy = py-SPECIAL_BTN_Y; return dx*dx+dy*dy <= SPECIAL_BTN_R*SPECIAL_BTN_R; }
 function p_inPauseBtn(px, py) { const dx = px-PAUSE_BTN_X, dy = py-PAUSE_BTN_Y; return dx*dx+dy*dy <= PAUSE_BTN_R*PAUSE_BTN_R; }
 function p_inMuteBtn(px, py) { const dx = px-MUTE_BTN_X, dy = py-MUTE_BTN_Y; return dx*dx+dy*dy <= MUTE_BTN_R*MUTE_BTN_R; }
-const TITLE_MODES_Y = 235, TITLE_MODE_W = 110, TITLE_MODE_H = 48, TITLE_MODE_XS = [60,190,320];
 const TITLE_PLAY_Y = 290, TITLE_PLAY_W = 360, TITLE_PLAY_H = 38;
 const TITLE_FUSION_Y = 333, TITLE_FUSION_W = 360, TITLE_FUSION_H = 38;
 const TITLE_QUICK_Y = 376, TITLE_QUICK_W = 360, TITLE_QUICK_H = 38;
@@ -974,7 +1130,7 @@ const TITLE_GRID_X2 = TITLE_GRID_X1 + TITLE_GRID_W + TITLE_GRID_GAP;
 const TITLE_GRID_Y2 = TITLE_GRID_Y + TITLE_GRID_H + TITLE_GRID_GAP;
 const TITLE_GACHA_Y = 590, TITLE_GACHA_W = 360, TITLE_GACHA_H = 40;
 const TITLE_SETTINGS_BTN_R = 24, TITLE_SETTINGS_BTN_X = W - TITLE_SETTINGS_BTN_R - 16, TITLE_SETTINGS_BTN_Y = 40;
-const SHOP_TAB_Y = 82, SHOP_TAB_H = 34, SHOP_TAB_GAP = 6, SHOP_TAB_COUNT = 4;
+const SHOP_TAB_Y = 82, SHOP_TAB_H = 34, SHOP_TAB_GAP = 6, SHOP_TAB_COUNT = 5;
 const SHOP_TAB_TOTAL_W = W - MENU_MARGIN*2 - SHOP_TAB_GAP*(SHOP_TAB_COUNT-1);
 const SHOP_TAB_W = SHOP_TAB_TOTAL_W / SHOP_TAB_COUNT;
 const SHOP_TAB_START_X = MENU_MARGIN;
@@ -982,14 +1138,15 @@ const SHOP_TAB_WEAPON_X = SHOP_TAB_START_X;
 const SHOP_TAB_SPECIAL_X = SHOP_TAB_START_X + (SHOP_TAB_W+SHOP_TAB_GAP);
 const SHOP_TAB_UPGRADE_X = SHOP_TAB_START_X + (SHOP_TAB_W+SHOP_TAB_GAP)*2;
 const SHOP_TAB_COSMETIC_X = SHOP_TAB_START_X + (SHOP_TAB_W+SHOP_TAB_GAP)*3;
+const SHOP_TAB_FX_X = SHOP_TAB_START_X + (SHOP_TAB_W+SHOP_TAB_GAP)*4;
+let shopFxKind = "kill";
 
 function selectWeapon(type) {
   if (!ownsWeapon(type)) { showShopMessage("未購入の武器です！ショップで購入してください", "#ff6666"); return; }
   sfx.tap();
   selectedWeapon = type;
   weaponMenu = false; specialMenu = true;
-  specialMenuScrollY = 0;
-  menuScrollY = 0;
+  specialMenuScrollY = 0; menuScrollY = 0;
   activeWeapons = [type];
   fusionMode = false;
 }
@@ -1018,6 +1175,8 @@ function startGameWithCurrentSelection() {
   kingCrimsonTimer = 0; stickyFingersTimer = 0; stickyFingersTarget = null;
   gerTimer = 0; whiteSnakeTimer = 0; determinationActive = 0;
   boneBarriers = []; gasterBlasters = []; blueAttacks = [];
+  yoyoStates = []; frisbeeStates = []; chainStates = []; hammerWave = 0; batSwing = 0; hulaAngle = 0;
+  eraserOrbs = []; bubbleHornPuffs = []; karaokeWaves = []; kendamaBalls = [];
   const sl = 1 + getStartLevelBonus();
   level = sl; exp = 0; nextExp = 6 + (sl-1)*8;
   score = 0; time = 0; difficulty = 1;
@@ -1027,6 +1186,8 @@ function startGameWithCurrentSelection() {
   studyTimer = studyTimerMax; studyQuiz = null; studyQuizActive = false;
   studyCorrectCount = 0; studyBurstGauge = 0;
   pauseScreen = false; pauseBackToTitleConfirm = false;
+  emergencyMenu = false;
+  saveData.emergencyUsed = false;
   shake(25); flash(specials[selectedSpecial].color, 10); chroma(10);
   saveData.totalPlays = (saveData.totalPlays || 0) + 1;
   writeSave();
@@ -1050,6 +1211,7 @@ function startStudyMode(grade) {
   studySelectScreen = false; titleScreen = false;
   weaponMenu = false; specialMenu = false; shopScreen = false;
   missionScreen = false; challengeScreen = false;
+  hardChallengeScreen = false;
   player.maxHp = 50 + getMaxHpBonus();
   player.hp = player.maxHp;
   player.x = W/2; player.y = H-120; player.cool = 0;
@@ -1063,6 +1225,8 @@ function startStudyMode(grade) {
   kingCrimsonTimer = 0; stickyFingersTimer = 0; stickyFingersTarget = null;
   gerTimer = 0; whiteSnakeTimer = 0; determinationActive = 0;
   boneBarriers = []; gasterBlasters = []; blueAttacks = [];
+  yoyoStates = []; frisbeeStates = []; chainStates = []; hammerWave = 0; batSwing = 0; hulaAngle = 0;
+  eraserOrbs = []; bubbleHornPuffs = []; karaokeWaves = []; kendamaBalls = [];
   level = 1; exp = 0; nextExp = 6; score = 0; time = 0; difficulty = 1;
   combo = 0; comboTimer = 0; maxCombo = 0;
   wave = 1; waveTimer = 0; bossActive = false;
@@ -1070,23 +1234,25 @@ function startStudyMode(grade) {
   studyTimer = studyTimerMax; studyQuiz = null; studyQuizActive = false;
   studyCorrectCount = 0; studyBurstGauge = 0;
   pauseScreen = false; pauseBackToTitleConfirm = false;
+  emergencyMenu = false;
+  saveData.emergencyUsed = false;
   shake(25); flash("#66ccff", 10); chroma(10);
   saveData.totalPlays = (saveData.totalPlays || 0) + 1;
   writeSave();
 }
 
 /* ========== BOSS BATTLE MODE ========== */
+const BOSS_PLAYER_HP = 5;
 const BOSS_FORMS = [null,
-  { name:"FORM 1 : NEON SENTINEL", hp:2400, color:"#00ffcc" },
-  { name:"FORM 2 : CRIMSON ARCHITECT", hp:3200, color:"#ff0044" },
-  { name:"FORM 3 : OMEGA BREAKER", hp:4000, color:"#ff00ff" },
-  { name:"FORM 4 : ZERO ABYSS", hp:3200, color:"#ffee00" }
+  { name:"FORM 1 : NEON SENTINEL", hp:2200, color:"#00ffcc" },
+  { name:"FORM 2 : CRIMSON ARCHITECT", hp:2800, color:"#ff0044" },
+  { name:"FORM 3 : OMEGA BREAKER", hp:3400, color:"#ff00ff" },
+  { name:"FORM 4 : ZERO ABYSS", hp:3000, color:"#ffee00" }
 ];
-const BOSS_FORM_N = 4, BOSS_GATE_T = [0, 360, 420, 480, 540], BOSS_GATE_AT = [.66, .33];
+const BOSS_FORM_N = 4;
 function bossStartGate(e) {
-  const thr = BOSS_GATE_AT[e.gn];
-  e.gateHp = Math.max(2, Math.floor(e.maxHp*thr)); e.hp = e.gateHp;
-  e.gateT = BOSS_GATE_T[bossForm]; e.gateMax = e.gateT; e.gn++; e.sT = 0;
+  e.gateHp = 160; e.hp = 160;
+  e.gateT = 360; e.gateMax = 360; e.gn = 1; e.sT = 0;
   enemyBullets = [];
   showBigDamage(e.x, e.y+70, "BARRIER!", BOSS_FORMS[bossForm].color);
   sfx.bossAppear(); shake(30); flash(BOSS_FORMS[bossForm].color, 8);
@@ -1107,7 +1273,8 @@ function startBossBattleFromMenu() {
 }
 function setupBossBattle() {
   challengeNoSpecials = true;
-  player.maxHp = Math.max(10, Math.floor((50 + getMaxHpBonus())/2)); player.hp = player.maxHp;
+  player.maxHp = BOSS_PLAYER_HP;
+  player.hp = BOSS_PLAYER_HP;
   player.x = W/2; player.y = H-120; player.cool = 0; player.invincible = 60;
   player.dashTimer = 0; player.dashCooldown = 0;
   knifeAngle = -Math.PI/2; knifeTouchMode = null; swordAngle = -Math.PI/2;
@@ -1121,11 +1288,14 @@ function setupBossBattle() {
   kingCrimsonTimer = 0; stickyFingersTimer = 0; stickyFingersTarget = null;
   gerTimer = 0; whiteSnakeTimer = 0; determinationActive = 0;
   boneBarriers = []; gasterBlasters = []; blueAttacks = [];
+  yoyoStates = []; frisbeeStates = []; chainStates = []; hammerWave = 0; batSwing = 0; hulaAngle = 0;
+  eraserOrbs = []; bubbleHornPuffs = []; karaokeWaves = []; kendamaBalls = [];
   level = 12; exp = 0; nextExp = 999; score = 0; time = 0; difficulty = 1;
   combo = 0; comboTimer = 0; maxCombo = 0; wave = 1; waveTimer = 0; bossActive = false;
   resetMissionSession(); missionSession.plays = 1;
-  pauseScreen = false; pauseBackToTitleConfirm = false;
-  bossBeatLast = -1; bossDrop = 0;
+  pauseScreen = false; pauseBackToTitleConfirm = false; emergencyMenu = false;
+  saveData.emergencyUsed = false;
+  bossBeatLast = -1; bossDrop = 0; bossPendingSpell = false;
   startBossForm(1);
   startBossBGM();
   saveData.totalPlays = (saveData.totalPlays || 0) + 1; writeSave();
@@ -1136,12 +1306,12 @@ function startBossForm(n) {
   if (!e) { e = { x:W/2, y:-90, r:42, hp:F.hp, maxHp:F.hp, speed:0, type:"boss", score:50, shootRate:0, bossPhase:0, bm:true, tx:W/2 }; enemies.push(e); bossActive = true; }
   e.hp = e.maxHp = F.hp; e.invuln = true; e.phase2 = n >= 2; e.gn = 0; e.gateT = 0; e.sT = 0;
   bossInvT = n === 1 ? 150 : 120; bossFormT = 0; bossPat = null; bossPatI = -1; bossPatT = 0; bossDrop = 0;
+  bossPendingSpell = false;
   enemyBullets = [];
   level = 12 + (n-1)*3;
   sfx.bossAppear(); shake(80); flash(F.color, 20); chroma(25);
   if (n > 1) {
     for (const k of activeWeapons) weaponPower[k] = (weaponPower[k] || 0) + 1;
-    player.hp = Math.min(player.maxHp, player.hp + Math.ceil(player.maxHp*0.3));
     showBigDamage(player.x, player.y-40, "POWER UP!", "#ffcc00");
     burst(e.x, e.y, 100, F.color);
   }
@@ -1154,63 +1324,70 @@ function bossFormCleared(e) {
   startBossForm(bossForm+1);
 }
 function eb(x, y, a, s, r, h, ex) {
-  if (enemyBullets.length > 2000) return;
+  if (enemyBullets.length > 1200) return;
   const b = { x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r, hue: h };
   if (ex) Object.assign(b, ex);
   enemyBullets.push(b);
 }
+function eringGap(x, y, n, off, s, r, h, gapAngle, gapWidth, ex) {
+  const step = TAU / n;
+  for (let i = 0; i < n; i++) {
+    const a = off + i * step;
+    let d = Math.abs(((a - gapAngle + Math.PI) % TAU + TAU) % TAU - Math.PI);
+    if (d < gapWidth) continue;
+    eb(x, y, a, s, r, h, ex);
+  }
+}
 function ering(x, y, n, off, s, r, h, ex) { for (let i = 0; i < n; i++) eb(x, y, off + i/n*TAU, s, r, h, ex); }
 function eaim(e) { return Math.atan2(player.y-e.y, player.x-e.x); }
 function efan(e, n, sp, s, r, h, ex) { const a = eaim(e); for (let i = 0; i < n; i++) eb(e.x, e.y, a + (i-(n-1)/2)*sp, s, r, h, ex); }
-function rainRow(t, s, h) { const g = 90 + (Math.sin(t/70)+1)/2*(W-180); for (let x = 12; x < W; x += 27) if (Math.abs(x-g) > 58) eb(x, -8, Math.PI/2, s, 5, h); }
-/* 各パターン: n=名前, d=長さ(フレーム), f(e, t, beat, beatIndex) */
+function rainRow(t, s, h) {
+  const gap = 120 + (Math.sin(t/90)+1)/2 * (W-260);
+  const step = 34;
+  for (let x = 16; x < W; x += step) if (Math.abs(x-gap) > 78) eb(x, -8, Math.PI/2, s, 5, h);
+}
 const BOSS_PATS = [null, [
-  { n:"AIM FAN", d:350, f:(e,t,bt,bi) => { if (bt) efan(e, 9 + (bi%2)*4, .2, 3.2, 5, 170); if (t%14 === 0) efan(e, 3, .1, 4.2, 5, 40); } },
-  { n:"SPIRAL", d:350, f:(e,t) => { if (t%3 === 0) for (let k = 0; k < 5; k++) eb(e.x, e.y, t*.11 + k*TAU/5, 2.6, 5, 200 + k*25); } },
-  { n:"RAIN GAP", d:360, f:(e,t) => { if (t%15 === 0) rainRow(t, 2.8, 140); if (t%50 === 0) efan(e, 5, .2, 3.2, 5, 40); } },
-  { n:"BEAT RING", d:350, f:(e,t,bt,bi) => { if (bt) { ering(e.x, e.y, 30, (bi%2)*.1, 2.3, 6, 300); ering(e.x, e.y, 30, .05+(bi%2)*.1, 3.1, 5, 200); if (bi%4 === 3) efan(e, 7, .12, 3.8, 6, 40); } } },
-  { n:"TWIN SPIRAL", d:380, f:(e,t) => { if (t%3 === 0) for (let k = 0; k < 3; k++) { eb(e.x, e.y, t*.1 + k*TAU/3, 2.5, 5, 170); eb(e.x, e.y, -t*.1 + k*TAU/3, 2.5, 5, 320); } } },
-  { n:"CURVE", d:360, f:(e,t) => { if (t%18 === 0) { ering(e.x, e.y, 22, t*.05, 2.4, 5, 60, { w:.012 }); ering(e.x, e.y, 22, t*.05, 2.4, 5, 200, { w:-.012 }); } } }
+  { n:"AIM FAN", d:340, f:(e,t,bt,bi) => { if (bt) efan(e, 5 + (bi%2)*2, .26, 2.6, 5, 170); if (t%20 === 0) efan(e, 3, .16, 3.2, 5, 40); } },
+  { n:"SPIRAL", d:340, f:(e,t) => { if (t%4 === 0) for (let k = 0; k < 3; k++) eb(e.x, e.y, t*.09 + k*TAU/3, 2.2, 5, 200 + k*30); } },
+  { n:"RAIN GAP", d:360, f:(e,t) => { if (t%18 === 0) rainRow(t, 2.3, 140); if (t%60 === 0) efan(e, 3, .26, 2.6, 5, 40); } },
+  { n:"BEAT RING", d:340, f:(e,t,bt,bi) => { if (bt) { eringGap(e.x, e.y, 22, (bi%2)*.12, 1.9, 6, 300, eaim(e)+Math.PI, .7); if (bi%4 === 3) efan(e, 5, .18, 3, 6, 40); } } },
+  { n:"TWIN SPIRAL", d:360, f:(e,t) => { if (t%4 === 0) for (let k = 0; k < 2; k++) { eb(e.x, e.y, t*.08 + k*Math.PI, 2.1, 5, 170); eb(e.x, e.y, -t*.08 + k*Math.PI, 2.1, 5, 320); } } },
+  { n:"CURVE", d:360, f:(e,t) => { if (t%24 === 0) { ering(e.x, e.y, 14, t*.05, 2.0, 5, 60, { w:.010 }); ering(e.x, e.y, 14, t*.05, 2.0, 5, 200, { w:-.010 }); } } }
 ], [
-  { n:"NEEDLES", d:340, f:(e,t,bt) => { if (t%4 === 0) efan(e, 5, .09, 5, 4, 350); if (bt) ering(e.x, e.y, 24, 0, 2, 5, 20); } },
-  { n:"CROSS SPIRAL", d:380, f:(e,t) => { if (t%4 === 0) for (let k = 0; k < 6; k++) eb(e.x, e.y, t*.09*(k%2 ? -1 : 1) + k*TAU/6, 2.2, 5, 350 + k*10, { ac:1.012, vm:4 }); } },
-  { n:"SPLIT", d:360, f:(e,t) => { if (t%36 === 0) efan(e, 5, .3, 1.8, 9, 30, { sp:{ t:50, n:14, s:2.4, h:60 } }); } },
-  { n:"STOP & GO", d:380, f:(e,t) => { if (t%55 === 0) ering(e.x, e.y, 36, t*.02, 3, 5, 200, { st:22, ho:45, gs:3.2 }); } },
-  { n:"SWEEP CURTAIN", d:360, f:(e,t,bt) => { e.tx = W*.1 + (t/360)*W*.8; if (t%2 === 0) eb(e.x, e.y, Math.PI/2 + (Math.random()-.5)*.3, 3.2, 5, 100); if (bt) efan(e, 9, .2, 3, 6, 350); } },
-  { n:"FLOWER", d:360, f:(e,t) => { if (t%22 === 0) for (let i = 0; i < 60; i++) { const th = i/60*TAU; eb(e.x, e.y, th + t*.03, 1.5 + 1.3*Math.abs(Math.cos(3*th)), 5, 300 + i*2); } } },
-  { n:"BOUNCE", d:340, f:(e,t) => { if (t%3 === 0) eb(e.x, e.y, Math.PI/2 + Math.sin(t/25)*1.2, 3, 5, 170, { bn:2 }); if (t%40 === 0) ering(e.x, e.y, 16, 0, 2.2, 5, 300); } },
-  { n:"SLAM", d:350, f:(e,t,bt,bi) => { if (bt) { if (bi%2 === 0) { ering(e.x, e.y, 46, 0, 1.9, 7, 350); efan(e, 11, .16, 3.6, 5, 20); } else { ering(e.x, e.y, 32, .15, 2.8, 5, 300); ering(e.x, e.y, 32, .05, 2.1, 5, 200); } } } }
+  { n:"NEEDLES", d:340, f:(e,t,bt) => { if (t%6 === 0) efan(e, 4, .12, 4.2, 4, 350); if (bt) eringGap(e.x, e.y, 18, 0, 1.7, 5, 20, eaim(e), .8); } },
+  { n:"CROSS SPIRAL", d:360, f:(e,t) => { if (t%5 === 0) for (let k = 0; k < 4; k++) eb(e.x, e.y, t*.08*(k%2 ? -1 : 1) + k*TAU/4, 1.9, 5, 350 + k*10, { ac:1.012, vm:4 }); } },
+  { n:"SPLIT", d:360, f:(e,t) => { if (t%45 === 0) efan(e, 3, .34, 1.6, 9, 30, { sp:{ t:50, n:10, s:2.1, h:60 } }); } },
+  { n:"STOP & GO", d:380, f:(e,t) => { if (t%65 === 0) eringGap(e.x, e.y, 24, t*.02, 2.5, 5, 200, eaim(e)+Math.PI, .55, { st:22, ho:45, gs:2.6 }); } },
+  { n:"SWEEP CURTAIN", d:360, f:(e,t,bt) => { e.tx = W*.15 + (t/360)*W*.7; if (t%3 === 0) eb(e.x, e.y, Math.PI/2 + (Math.random()-.5)*.22, 2.7, 5, 100); if (bt) efan(e, 5, .24, 2.6, 6, 350); } },
+  { n:"FLOWER", d:360, f:(e,t) => { if (t%30 === 0) for (let i = 0; i < 40; i++) { const th = i/40*TAU; eb(e.x, e.y, th + t*.03, 1.3 + 1.1*Math.abs(Math.cos(3*th)), 5, 300 + i*2); } } },
+  { n:"BOUNCE", d:340, f:(e,t) => { if (t%4 === 0) eb(e.x, e.y, Math.PI/2 + Math.sin(t/30)*1.1, 2.6, 5, 170, { bn:2 }); if (t%50 === 0) eringGap(e.x, e.y, 12, 0, 1.9, 5, 300, eaim(e), .7); } },
+  { n:"SLAM", d:350, f:(e,t,bt,bi) => { if (bt) { if (bi%2 === 0) { eringGap(e.x, e.y, 30, 0, 1.7, 7, 350, eaim(e), .5); efan(e, 5, .22, 3, 5, 20); } else { eringGap(e.x, e.y, 22, .15, 2.4, 5, 300, eaim(e)+Math.PI, .7); } } } }
 ], [
-  { n:"TRIPLE SPIRAL", d:380, f:(e,t) => { if (t%3 === 0) for (let k = 0; k < 5; k++) eb(e.x, e.y, t*.12 + k*TAU/5, 2.8, 5, 300 + k*20); if (t%14 === 0) efan(e, 3, .12, 4, 6, 60); } },
-  { n:"ENCIRCLE", d:400, f:(e,t) => {
-      if (t%50 === 0) { const gap = Math.random()*TAU; for (let i = 0; i < 44; i++) { const a = i/44*TAU; let d = Math.abs(a-gap)%TAU; if (d > Math.PI) d = TAU-d; if (d < .4) continue; eb(player.x + Math.cos(a)*240, player.y + Math.sin(a)*240, a+Math.PI, 2.2, 5, 190); } }
-      if (t%18 === 0) efan(e, 5, .2, 3, 5, 300); } },
-  { n:"RAIN & FAN", d:380, f:(e,t,bt) => { if (t%13 === 0) rainRow(t, 3.2, 140); if (bt) efan(e, 11, .18, 3.4, 5, 350); } },
-  { n:"FAST DOUBLE", d:380, f:(e,t) => { if (t%2 === 0) { eb(e.x, e.y, t*.15, 3, 5, 170); eb(e.x, e.y, -t*.15 + Math.PI, 3, 5, 300); } if (t%20 === 0) ering(e.x, e.y, 20, 0, 2, 5, 60); } },
-  { n:"CHAIN SPLIT", d:380, f:(e,t) => { if (t%45 === 0) efan(e, 3, .45, 1.6, 10, 30, { sp:{ t:45, n:10, s:2, h:60, r:7, sp2:{ t:40, n:7, s:2.2, h:180 } } }); } },
-  { n:"FINAL SPIRAL", d:420, f:(e,t,bt,bi) => { if (t%3 === 0) for (let k = 0; k < 7; k++) eb(e.x, e.y, t*.07 + k*TAU/7, 2.4, 5, (t*3 + k*40)%360); if (bt) { ering(e.x, e.y, 36, bi*.1, 2, 6, 60); if (bi%2 === 0) efan(e, 9, .16, 4, 6, 350); } } }
+  { n:"TRIPLE SPIRAL", d:360, f:(e,t) => { if (t%4 === 0) for (let k = 0; k < 3; k++) eb(e.x, e.y, t*.10 + k*TAU/3, 2.3, 5, 300 + k*20); if (t%20 === 0) efan(e, 3, .18, 3.2, 6, 60); } },
+  { n:"ENCIRCLE", d:380, f:(e,t) => {
+      if (t%65 === 0) { const gap = eaim(e) + Math.PI; for (let i = 0; i < 30; i++) { const a = i/30*TAU; let d = Math.abs(((a-gap+Math.PI)%TAU+TAU)%TAU-Math.PI); if (d < .55) continue; eb(player.x + Math.cos(a)*240, player.y + Math.sin(a)*240, a+Math.PI, 1.9, 5, 190); } }
+      if (t%26 === 0) efan(e, 3, .28, 2.6, 5, 300); } },
+  { n:"RAIN & FAN", d:360, f:(e,t,bt) => { if (t%17 === 0) rainRow(t, 2.5, 140); if (bt) efan(e, 5, .24, 2.8, 5, 350); } },
+  { n:"FAST DOUBLE", d:360, f:(e,t) => { if (t%3 === 0) { eb(e.x, e.y, t*.12, 2.6, 5, 170); eb(e.x, e.y, -t*.12 + Math.PI, 2.6, 5, 300); } if (t%32 === 0) eringGap(e.x, e.y, 14, 0, 1.7, 5, 60, eaim(e), .8); } },
+  { n:"CHAIN SPLIT", d:360, f:(e,t) => { if (t%55 === 0) efan(e, 2, .5, 1.5, 10, 30, { sp:{ t:45, n:7, s:1.8, h:60, r:7, sp2:{ t:40, n:5, s:2.0, h:180 } } }); } },
+  { n:"FINAL SPIRAL", d:400, f:(e,t,bt,bi) => { if (t%4 === 0) for (let k = 0; k < 5; k++) eb(e.x, e.y, t*.06 + k*TAU/5, 2.1, 5, (t*3 + k*40)%360); if (bt) { eringGap(e.x, e.y, 26, bi*.1, 1.8, 6, 60, eaim(e), .6); if (bi%2 === 0) efan(e, 5, .22, 3.2, 6, 350); } } }
 ]];
 BOSS_PATS[4] = [
-  { n:"ZERO SPIRAL", d:380, f:(e,t,bt,bi) => { if (t%4 === 0) for (let k = 0; k < 8; k++) eb(e.x, e.y, t*.08 + k*TAU/8, 2.5, 5, 50 + k*8); if (bt) efan(e, 7, .16, 3.6, 5, 20); } },
-  { n:"COLLAPSE", d:380, f:(e,t) => { if (t%50 === 0) ering(e.x, e.y, 40, t*.02, 3, 5, 200, { st:20, ho:40, gs:3.4 }); if (t%14 === 0) rainRow(t, 2.8, 60); } },
-  { n:"MIRROR WEAVE", d:380, f:(e,t) => { if (t%3 === 0) for (let k = 0; k < 4; k++) { eb(e.x, e.y, t*.09 + k*TAU/4, 2.6, 5, 50, { w:.006 }); eb(e.x, e.y, -t*.09 + k*TAU/4, 2.6, 5, 300, { w:-.006 }); } } },
-  { n:"AFTERIMAGE", d:400, f:(e,t) => { if (t%45 === 0) { const g1 = Math.random()*TAU, g2 = g1 + Math.PI; for (let i = 0; i < 48; i++) { const a = i/48*TAU; let d1 = Math.abs(a-g1)%TAU, d2 = Math.abs(a-g2)%TAU; if (d1 > Math.PI) d1 = TAU-d1; if (d2 > Math.PI) d2 = TAU-d2; if (d1 < .35 || d2 < .35) continue; eb(player.x + Math.cos(a)*250, player.y + Math.sin(a)*250, a+Math.PI, 2.3, 5, 60); } } if (t%4 === 0) efan(e, 3, .12, 4.6, 4, 350); } },
-  { n:"OMEGA PULSE", d:380, f:(e,t,bt,bi) => { if (bt) { ering(e.x, e.y, 32, bi*.07, 2.4, 6, 60); if (bi%2) efan(e, 9, .15, 3.8, 5, 20); } if (t%40 === 0) efan(e, 3, .4, 1.7, 10, 30, { sp:{ t:45, n:10, s:2.1, h:60 } }); } },
-  { n:"ABYSS FINALE", d:420, f:(e,t,bt,bi) => { if (t%3 === 0) for (let k = 0; k < 6; k++) eb(e.x, e.y, t*.1*(k%2 ? -1 : 1) + k*TAU/6, 2.4, 5, (t*4 + k*50)%360, { ac:1.01, vm:3.8 }); if (bt) ering(e.x, e.y, 28, bi*.12, 2.1, 6, 200); } }
+  { n:"ZERO SPIRAL", d:360, f:(e,t,bt,bi) => { if (t%5 === 0) for (let k = 0; k < 5; k++) eb(e.x, e.y, t*.07 + k*TAU/5, 2.2, 5, 50 + k*8); if (bt) efan(e, 5, .22, 3, 5, 20); } },
+  { n:"COLLAPSE", d:380, f:(e,t) => { if (t%65 === 0) eringGap(e.x, e.y, 28, t*.02, 2.4, 5, 200, eaim(e)+Math.PI, .55, { st:20, ho:40, gs:2.8 }); if (t%18 === 0) rainRow(t, 2.4, 60); } },
+  { n:"MIRROR WEAVE", d:380, f:(e,t) => { if (t%4 === 0) for (let k = 0; k < 3; k++) { eb(e.x, e.y, t*.07 + k*TAU/3, 2.3, 5, 50, { w:.005 }); eb(e.x, e.y, -t*.07 + k*TAU/3, 2.3, 5, 300, { w:-.005 }); } } },
+  { n:"AFTERIMAGE", d:400, f:(e,t) => { if (t%60 === 0) { const gap = eaim(e) + Math.PI; for (let i = 0; i < 32; i++) { const a = i/32*TAU; let d = Math.abs(((a-gap+Math.PI)%TAU+TAU)%TAU-Math.PI); if (d < .5) continue; eb(player.x + Math.cos(a)*250, player.y + Math.sin(a)*250, a+Math.PI, 2.0, 5, 60); } } if (t%6 === 0) efan(e, 2, .18, 4, 4, 350); } },
+  { n:"OMEGA PULSE", d:380, f:(e,t,bt,bi) => { if (bt) { eringGap(e.x, e.y, 22, bi*.07, 2.0, 6, 60, eaim(e), .6); if (bi%2) efan(e, 5, .22, 3.2, 5, 20); } if (t%50 === 0) efan(e, 3, .34, 1.5, 10, 30, { sp:{ t:45, n:8, s:1.9, h:60 } }); } },
+  { n:"ABYSS FINALE", d:420, f:(e,t,bt,bi) => { if (t%4 === 0) for (let k = 0; k < 4; k++) eb(e.x, e.y, t*.08*(k%2 ? -1 : 1) + k*TAU/4, 2.1, 5, (t*4 + k*50)%360, { ac:1.01, vm:3.6 }); if (bt) eringGap(e.x, e.y, 20, bi*.12, 1.8, 6, 200, eaim(e), .7); } }
 ];
-/* バリア戦(スペル): 各形態2回。ボスは無敵で耐久パターンを撃つ */
 const BOSS_SPELLS = [null, [
-  { n:"SPELL: NEON LATTICE", f:(e,t,bt,bi) => { if (t%40 === 0) ering(e.x, e.y, 28, t*.03, 2.3, 5, 170); if (t%20 === 0) efan(e, 5, .2, 3.4, 5, 40); } },
-  { n:"SPELL: PULSE RAIN", f:(e,t,bt) => { if (t%16 === 0) rainRow(t, 2.6, 170); if (bt) ering(e.x, e.y, 24, 0, 2, 5, 300); } }
+  { n:"SPELL: NEON LATTICE", f:(e,t,bt,bi) => { if (t%46 === 0) eringGap(e.x, e.y, 20, t*.03, 2.0, 5, 170, eaim(e)+Math.PI, .6); if (t%28 === 0) efan(e, 4, .24, 2.8, 5, 40); } }
 ], [
-  { n:"SPELL: CRIMSON WHEEL", f:(e,t,bt) => { if (t%4 === 0) for (let k = 0; k < 5; k++) eb(e.x, e.y, t*.1*(k%2 ? -1 : 1) + k*TAU/5, 2.3, 5, 350 + k*8, { ac:1.01, vm:4 }); if (bt) efan(e, 9, .18, 3.2, 5, 20); } },
-  { n:"SPELL: BLOOD FLOWER", f:(e,t) => { if (t%26 === 0) for (let i = 0; i < 56; i++) { const th = i/56*TAU; eb(e.x, e.y, th + t*.03, 1.5 + 1.3*Math.abs(Math.cos(3*th)), 5, 340 + i*2); } if (t%48 === 0) efan(e, 5, .25, 3.4, 5, 40); } }
+  { n:"SPELL: CRIMSON WHEEL", f:(e,t,bt) => { if (t%5 === 0) for (let k = 0; k < 4; k++) eb(e.x, e.y, t*.09*(k%2 ? -1 : 1) + k*TAU/4, 2.0, 5, 350 + k*8, { ac:1.01, vm:3.8 }); if (bt) efan(e, 5, .24, 2.8, 5, 20); } }
 ], [
-  { n:"SPELL: OMEGA CAGE", f:(e,t) => { if (t%40 === 0) { const gap = Math.random()*TAU; for (let i = 0; i < 44; i++) { const a = i/44*TAU; let d = Math.abs(a-gap)%TAU; if (d > Math.PI) d = TAU-d; if (d < .36) continue; eb(player.x + Math.cos(a)*230, player.y + Math.sin(a)*230, a+Math.PI, 2.3, 5, 300); } } if (t%13 === 0) rainRow(t, 3, 140); } },
-  { n:"SPELL: SPLIT STORM", f:(e,t) => { if (t%38 === 0) efan(e, 5, .32, 1.7, 9, 30, { sp:{ t:48, n:12, s:2.3, h:60 } }); if (t%3 === 0) eb(e.x, e.y, Math.PI/2 + Math.sin(t/20)*1.3, 3, 5, 170); } }
+  { n:"SPELL: OMEGA CAGE", f:(e,t) => { if (t%65 === 0) { const gap = eaim(e) + Math.PI; for (let i = 0; i < 32; i++) { const a = i/32*TAU; let d = Math.abs(((a-gap+Math.PI)%TAU+TAU)%TAU-Math.PI); if (d < .5) continue; eb(player.x + Math.cos(a)*230, player.y + Math.sin(a)*230, a+Math.PI, 2.0, 5, 300); } } if (t%20 === 0) rainRow(t, 2.4, 140); } }
 ], [
-  { n:"SPELL: ZERO HOUR", f:(e,t,bt,bi) => { if (t%3 === 0) for (let k = 0; k < 7; k++) eb(e.x, e.y, t*.08 + k*TAU/7, 2.4, 5, (t*3 + k*40)%360); if (bt) ering(e.x, e.y, 30, bi*.1, 2.2, 6, 60); } },
-  { n:"SPELL: ABYSS GAZE", f:(e,t,bt,bi) => { if (t%36 === 0) ering(e.x, e.y, 36, t*.02, 3, 5, 200, { st:22, ho:45, gs:3.3 }); if (t%12 === 0) rainRow(t, 3.2, 60); if (bt && bi%2) efan(e, 11, .17, 3.8, 5, 350); } }
+  { n:"SPELL: ZERO HOUR", f:(e,t,bt,bi) => { if (t%5 === 0) for (let k = 0; k < 5; k++) eb(e.x, e.y, t*.07 + k*TAU/5, 2.1, 5, (t*3 + k*40)%360); if (bt) eringGap(e.x, e.y, 22, bi*.1, 1.9, 6, 60, eaim(e), .7); } }
 ]];
 function updateBossBattle() {
   const e = enemies.find(q => q.bm); if (!e) return;
@@ -1222,21 +1399,20 @@ function updateBossBattle() {
     const bi = Math.floor(bt), beat = bi !== bossBeatLast; bossBeatLast = bi;
     if (e.gateT > 0) {
       e.hp = e.gateHp; e.tx = W/2 + Math.sin(bossFormT*.01)*60;
-      const sp = BOSS_SPELLS[bossForm][e.gn-1]; bossPat = sp;
+      const sp = BOSS_SPELLS[bossForm][0]; bossPat = sp;
       sp.f(e, e.sT++, beat, bi);
       if (--e.gateT <= 0) {
         enemyBullets = []; bossPat = null; bossPatT = 0;
-        powerups.push({ x:e.x, y:e.y+e.r, vy:1.2, r:14, kind:"heal", life:900, bob:0 });
-        showBigDamage(e.x, e.y+70, "BARRIER BREAK!", "#ffffff"); showDamage(e.x, e.y+100, "HEAL DROP!", "#00ff66");
+        showBigDamage(e.x, e.y+70, "BARRIER BREAK!", "#ffffff");
         shake(40); flash("#ffffff", 8); burst(e.x, e.y, 60, BOSS_FORMS[bossForm].color);
+        bossPendingSpell = true;
+        if (bossForm < BOSS_FORM_N) { bossFormCleared(e); }
+        else { enemyBullets = []; }
       }
     } else {
-      if (e.gn < 2 && e.hp/e.maxHp < BOSS_GATE_AT[e.gn]) { bossStartGate(e); }
-      else {
-        const pats = BOSS_PATS[bossForm];
-        if (!bossPat || bossPatT >= bossPat.d || !pats.includes(bossPat)) { bossPatI = (bossPatI+1) % pats.length; bossPat = pats[bossPatI]; bossPatT = 0; }
-        bossPat.f(e, bossPatT++, beat, bi);
-      }
+      const pats = BOSS_PATS[bossForm];
+      if (!bossPat || bossPatT >= bossPat.d || !pats.includes(bossPat)) { bossPatI = (bossPatI+1) % pats.length; bossPat = pats[bossPatI]; bossPatT = 0; }
+      bossPat.f(e, bossPatT++, beat, bi);
     }
   }
   e.x += (e.tx - e.x)*.05;
@@ -1246,23 +1422,22 @@ function drawBossUI() {
   const F = BOSS_FORMS[bossForm], e = enemies.find(q => q.bm);
   ctx.textAlign = "left";
   ctx.fillStyle = "#222"; ctx.fillRect(20, 20, 200, 16);
-  ctx.fillStyle = player.hp <= 15 ? "#ff3344" : "#00ff66"; ctx.shadowBlur = 15; ctx.shadowColor = ctx.fillStyle;
-  ctx.fillRect(20, 20, 200*Math.max(0, player.hp)/player.maxHp, 16); ctx.shadowBlur = 0;
+  ctx.fillStyle = "#ff3344"; ctx.shadowBlur = 15; ctx.shadowColor = "#ff3344";
+  ctx.fillRect(20, 20, 200*Math.max(0, player.hp)/BOSS_PLAYER_HP, 16); ctx.shadowBlur = 0;
   ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.strokeRect(20, 20, 200, 16);
+  ctx.font = "bold 12px Arial"; ctx.fillStyle = "#ffffff"; ctx.shadowBlur = 8; ctx.shadowColor = "#ff3344";
+  ctx.fillText(`♥ ${Math.max(0, player.hp)} / ${BOSS_PLAYER_HP}`, 228, 33); ctx.shadowBlur = 0;
   ctx.font = "bold 12px Arial"; ctx.fillStyle = F.color; ctx.shadowBlur = 10; ctx.shadowColor = F.color;
   ctx.fillText(F.name, 20, 58); ctx.shadowBlur = 0;
   ctx.fillStyle = "#222"; ctx.fillRect(20, 64, 390, 10);
   if (e) { ctx.fillStyle = e.invuln ? (Math.floor(Date.now()/100)%2 ? "#fff" : F.color) : F.color; ctx.fillRect(20, 64, 390*Math.max(0, e.hp/e.maxHp), 10); }
   ctx.strokeStyle = "#fff"; ctx.strokeRect(20, 64, 390, 10);
   ctx.fillStyle = "rgba(255,255,255,.8)"; ctx.font = "bold 12px Arial"; ctx.fillText("♪ " + (bossPat ? bossPat.n : "..."), 20, 92);
-  if (e) {
-    ctx.fillStyle = "#fff"; for (const g of BOSS_GATE_AT) ctx.fillRect(20 + 390*g - 1, 62, 2, 14);
-    if (e.gateT > 0) {
-      ctx.save(); ctx.strokeStyle = F.color; ctx.lineWidth = 4; ctx.shadowBlur = 20; ctx.shadowColor = F.color;
-      ctx.globalAlpha = .6 + .3*Math.sin(Date.now()/90);
-      ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 16, 0, TAU); ctx.stroke(); ctx.restore();
-      ctx.fillStyle = F.color; ctx.font = "bold 13px Arial"; ctx.fillText(`🛡 BARRIER ${(e.gateT/60).toFixed(1)}s`, 230, 92);
-    }
+  if (e && e.gateT > 0) {
+    ctx.save(); ctx.strokeStyle = F.color; ctx.lineWidth = 4; ctx.shadowBlur = 20; ctx.shadowColor = F.color;
+    ctx.globalAlpha = .6 + .3*Math.sin(Date.now()/90);
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 16, 0, TAU); ctx.stroke(); ctx.restore();
+    ctx.fillStyle = F.color; ctx.font = "bold 13px Arial"; ctx.fillText(`🛡 BARRIER ${(e.gateT/60).toFixed(1)}s`, 230, 92);
   }
   ctx.font = "11px Arial";
   activeWeapons.forEach((k, i) => { ctx.fillStyle = weapons[k].color; ctx.fillText(weapons[k].name, 20, 112 + i*15); });
@@ -1288,17 +1463,20 @@ function rollGacha() {
   const pool = WEAPON_ORDER.filter(k => !ownsWeapon(k));
   const sp = SPECIAL_ORDER.filter(k => !ownsSpecial(k) && k !== "knowledgeburst");
   const co = COSMETIC_ORDER.filter(k => !ownsCosmetic(k));
+  const fx = FX_ORDER.filter(k => !ownsFx(k) && !isFreeFx(k));
   const all = [];
   for (const k of pool) all.push({ kind: "weapon", key: k });
   for (const k of sp) all.push({ kind: "special", key: k });
   for (const k of co) all.push({ kind: "cosmetic", key: k });
+  for (const k of fx) all.push({ kind: "fx", key: k });
   if (all.length === 0) { showShopMessage("すべて解放済み！", "#ffd700"); saveData.coins += 300; return; }
   const pick = all[Math.floor(Math.random()*all.length)];
   if (pick.kind === "weapon") saveData.ownedWeapons.push(pick.key);
   else if (pick.kind === "special") saveData.ownedSpecials.push(pick.key);
-  else saveData.ownedCosmetics.push(pick.key);
+  else if (pick.kind === "cosmetic") saveData.ownedCosmetics.push(pick.key);
+  else saveData.ownedFx.push(pick.key);
   writeSave();
-  const label = pick.kind === "weapon" ? weapons[pick.key].name : pick.kind === "special" ? specials[pick.key].name : cosmetics[pick.key].name;
+  const label = pick.kind === "weapon" ? weapons[pick.key].name : pick.kind === "special" ? specials[pick.key].name : pick.kind === "cosmetic" ? cosmetics[pick.key].name : FX_ITEMS[pick.key].name;
   showShopMessage(`🎉 ${label} を獲得！`, "#ffd700");
   sfx.coin(); sfx.clear();
   shake(50); flash("#ffd700", 15); chroma(25); hitStopAdd(10);
@@ -1318,9 +1496,10 @@ function startPointer(e) {
     if (p_inRange(p.x, p.y, bx, by, bw, bh)) { sfx.tap(); claimDailyBonus(); }
     return;
   }
-  if (!titleScreen && !weaponMenu && !specialMenu && !shopScreen && !gameOver && !missionScreen && !challengeScreen && !studySelectScreen && !pauseScreen && !settingsScreen) {
+  if (!titleScreen && !weaponMenu && !specialMenu && !shopScreen && !gameOver && !missionScreen && !challengeScreen && !studySelectScreen && !pauseScreen && !settingsScreen && !hardChallengeScreen && !emergencyMenu) {
     if (p_inMuteBtn(p.x, p.y)) { setSEEnabled(!seEnabled); saveData.seEnabled = seEnabled; writeSave(); if (seEnabled) sfx.tap(); return; }
   }
+  if (emergencyMenu) { touchX = p.x; touchY = p.y; return; }
   if (settingsScreen) { touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return; }
   if (pauseScreen) { touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return; }
   if (studyQuizActive && studyQuiz) {
@@ -1332,7 +1511,7 @@ function startPointer(e) {
     }
     return;
   }
-  if (shopScreen || missionScreen || challengeScreen || studySelectScreen) { touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return; }
+  if (shopScreen || missionScreen || challengeScreen || studySelectScreen || hardChallengeScreen) { touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return; }
   if (titleScreen) {
     { const dx = p.x-TITLE_SETTINGS_BTN_X, dy = p.y-TITLE_SETTINGS_BTN_Y; if (dx*dx+dy*dy <= TITLE_SETTINGS_BTN_R*TITLE_SETTINGS_BTN_R) { sfx.tap(); settingsScreen = true; titleScreen = false; return; } }
     { const bx = (W-TITLE_PLAY_W)/2; if (p_inRange(p.x, p.y, bx, TITLE_PLAY_Y, TITLE_PLAY_W, TITLE_PLAY_H)) { sfx.tap(); studyMode = false; titleScreen = false; weaponMenu = true; specialMenu = false; fusionMode = false; quickMode = false; applyChallenge(null); menuScrollY = 0; return; } }
@@ -1342,7 +1521,7 @@ function startPointer(e) {
     if (p_inRange(p.x, p.y, (W-TITLE_GACHA_W)/2, TITLE_GACHA_Y, TITLE_GACHA_W, TITLE_GACHA_H)) { sfx.tap(); rollGacha(); return; }
     if (p_inRange(p.x, p.y, TITLE_GRID_X1, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H)) { sfx.tap(); shopScreen = true; titleScreen = false; shopScrollY = 0; shopTab = "weapon"; return; }
     if (p_inRange(p.x, p.y, TITLE_GRID_X2, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H)) { sfx.tap(); checkDailyMissions(); missionScreen = true; titleScreen = false; return; }
-    if (p_inRange(p.x, p.y, TITLE_GRID_X1, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H)) { sfx.tap(); challengeScreen = true; titleScreen = false; return; }
+    if (p_inRange(p.x, p.y, TITLE_GRID_X1, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H)) { sfx.tap(); openHardChallenge(); titleScreen = false; return; }
     if (p_inRange(p.x, p.y, TITLE_GRID_X2, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H)) { sfx.tap(); studySelectScreen = true; titleScreen = false; return; }
     return;
   }
@@ -1350,7 +1529,7 @@ function startPointer(e) {
   if (specialMenu) { touchX = p.x; touchY = p.y; menuStartY = p.y; menuDragged = false; return; }
   if (gameOver) { if (gameClear) returnToTitle(); else resetGame(); return; }
   if (p_inPauseBtn(p.x, p.y)) { sfx.tap(); pauseScreen = true; pauseBackToTitleConfirm = false; return; }
-  if (specialGauge >= SPECIAL_MAX && specialActive <= 0 && !challengeNoSpecials && !studyMode && p_inSpecialBtn(p.x, p.y)) { sfx.special(); activateSpecial(); return; }
+  if (!bossMode && specialGauge >= SPECIAL_MAX && specialActive <= 0 && !challengeNoSpecials && !studyMode && p_inSpecialBtn(p.x, p.y)) { sfx.special(); activateSpecial(); return; }
   if (studyMode && studyBurstGauge >= STUDY_BURST_MAX && specialActive <= 0 && p_inSpecialBtn(p.x, p.y)) { sfx.special(); activateSpecial(); return; }
   if (selectedWeapon === "knife" || selectedWeapon === "sword") {
     const d = Math.hypot(p.x-player.x, p.y-player.y);
@@ -1363,8 +1542,9 @@ function movePointer(e) {
   e.preventDefault();
   if (touchX === null) return;
   const p = getPointerPosition(e);
+  if (emergencyMenu) { touchX = p.x; touchY = p.y; return; }
   if (pauseScreen || settingsScreen) { touchX = null; touchY = null; return; }
-  if (shopScreen || missionScreen || challengeScreen || studySelectScreen) {
+  if (shopScreen || missionScreen || challengeScreen || studySelectScreen || hardChallengeScreen) {
     const d = p.y - touchY;
     if (Math.abs(p.y-menuStartY) > 6) menuDragged = true;
     if (shopScreen) shopScrollY = Math.max(0, Math.min(shopMaxScroll(), shopScrollY - d));
@@ -1390,8 +1570,9 @@ function movePointer(e) {
   touchX = p.x; touchY = p.y;
 }
 function endPointer() {
+  if (emergencyMenu) { emergencyTap(touchX, touchY); touchX = null; touchY = null; return; }
   if ((pauseScreen || settingsScreen) && !menuDragged && touchX !== null) selectWeaponAt(touchX, touchY);
-  else if ((shopScreen || weaponMenu || specialMenu || missionScreen || challengeScreen || studySelectScreen) && !menuDragged && touchX !== null) selectWeaponAt(touchX, touchY);
+  else if ((shopScreen || weaponMenu || specialMenu || missionScreen || challengeScreen || studySelectScreen || hardChallengeScreen) && !menuDragged && touchX !== null) selectWeaponAt(touchX, touchY);
   touchX = null; touchY = null; knifeTouchMode = null; menuDragged = false;
 }
 canvas.addEventListener("touchstart", startPointer, { passive:false });
@@ -1408,6 +1589,75 @@ canvas.addEventListener("wheel", e => {
   else if (specialMenu) specialMenuScrollY = Math.max(0, Math.min(specialMenuMaxScroll(), specialMenuScrollY + e.deltaY));
   else if (weaponMenu) menuScrollY = Math.max(0, Math.min(menuMaxScroll(), menuScrollY + e.deltaY));
 }, { passive:false });
+
+/* ========== 緊急購入 (E) ========== */
+const EMERGENCY_ITEMS = [
+  { id:"heal", name:"HP全回復", desc:"HPを最大まで回復", price:300, color:"#00ff66" },
+  { id:"power", name:"武器パワー +1", desc:"現在の武器パワーを1上げる", price:500, color:"#ff4488" },
+  { id:"gauge", name:"必殺ゲージ MAX", desc:"必殺ゲージを満タンに", price:400, color:"#ff88ff" }
+];
+function emergencyTap(x, y) {
+  const bw = 300, bh = 60, bx = (W-bw)/2;
+  if (saveData.emergencyUsed) {
+    /* 閉じるだけ */
+    emergencyMenu = false; sfx.tap(); return;
+  }
+  for (let i = 0; i < EMERGENCY_ITEMS.length; i++) {
+    const it = EMERGENCY_ITEMS[i];
+    const iy = 180 + i*(bh+14);
+    if (p_inRange(x, y, bx, iy, bw, bh)) {
+      if (saveData.coins < it.price) { sfx.tap(); showDamage(W/2, iy, "コイン不足", "#ff6666"); return; }
+      saveData.coins -= it.price;
+      saveData.emergencyUsed = true;
+      if (it.id === "heal") { player.hp = player.maxHp; showBigDamage(player.x, player.y-40, "FULL HEAL!", "#00ff66"); }
+      else if (it.id === "power") { for (const k of activeWeapons) weaponPower[k] = (weaponPower[k]||0)+1; showBigDamage(player.x, player.y-40, "POWER +1!", "#ff4488"); }
+      else if (it.id === "gauge") { specialGauge = SPECIAL_MAX; showBigDamage(player.x, player.y-40, "GAUGE MAX!", "#ff88ff"); }
+      writeSave(); sfx.powerup(); shake(30); flash("#ffd700", 10); chroma(15);
+      emergencyMenu = false;
+      return;
+    }
+  }
+  if (p_inRange(x, y, (W-200)/2, H-110, 200, 44)) { emergencyMenu = false; sfx.tap(); }
+}
+function drawEmergencyMenu() {
+  if (!emergencyMenu) return;
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,10,.9)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.shadowBlur = 25; ctx.shadowColor = "#ffd700";
+  ctx.fillStyle = "#ffd700"; ctx.font = "bold 26px Arial";
+  ctx.fillText("🆘 緊急購入 (1プレイ1回)", W/2, 100);
+  ctx.shadowBlur = 10; ctx.fillStyle = "#fff"; ctx.font = "bold 14px Arial";
+  ctx.fillText(`所持: 🪙 ${saveData.coins}`, W/2, 130);
+  const bw = 300, bh = 60, bx = (W-bw)/2;
+  for (let i = 0; i < EMERGENCY_ITEMS.length; i++) {
+    const it = EMERGENCY_ITEMS[i];
+    const iy = 180 + i*(bh+14);
+    const can = !saveData.emergencyUsed && saveData.coins >= it.price;
+    ctx.shadowBlur = 20; ctx.shadowColor = it.color; ctx.strokeStyle = it.color; ctx.lineWidth = 3;
+    ctx.strokeRect(bx, iy, bw, bh);
+    ctx.fillStyle = it.color + (can ? "22" : "0a");
+    ctx.fillRect(bx, iy, bw, bh);
+    ctx.fillStyle = can ? it.color : "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillText(it.name, W/2, iy+26);
+    ctx.fillStyle = can ? "#fff" : "#666"; ctx.font = "bold 12px Arial";
+    ctx.fillText(it.desc, W/2, iy+46);
+    ctx.fillStyle = can ? "#ffd700" : "#666"; ctx.font = "bold 14px Arial";
+    ctx.fillText(`🪙 ${it.price}`, bx+bw-16, iy+26);
+  }
+  if (saveData.emergencyUsed) {
+    ctx.fillStyle = "#ff6666"; ctx.font = "bold 14px Arial";
+    ctx.fillText("このプレイでは使用済みです", W/2, 420);
+  }
+  const cbw = 200, cbh = 44, cbx = (W-cbw)/2, cby = H-110;
+  ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
+  ctx.strokeRect(cbx, cby, cbw, cbh);
+  ctx.fillStyle = "rgba(0,255,204,.15)"; ctx.fillRect(cbx, cby, cbw, cbh);
+  ctx.fillStyle = "#00ffcc"; ctx.font = "bold 18px Arial";
+  ctx.fillText("閉じる", W/2, cby+30);
+  ctx.restore();
+  ctx.textAlign = "left";
+}
 
 /* ========== メニュー選択 ========== */
 function selectWeaponAt(x, y) {
@@ -1429,9 +1679,28 @@ function selectWeaponAt(x, y) {
       if (p_inRange(x, y, nx, by, bw, bh)) { sfx.tap(); pauseBackToTitleConfirm = false; return; }
       return;
     }
+    /* 緊急購入ボタン(1プレイ1回) */
+    const ex = (W-240)/2, ey = H/2+90, ew = 240, eh = 50;
+    if (p_inRange(x, y, ex, ey, ew, eh)) { sfx.tap(); emergencyMenu = true; return; }
     const bw = 240, bh = 60, bx = (W-bw)/2, ry = H/2-80, qy = H/2+10;
     if (p_inRange(x, y, bx, ry, bw, bh)) { sfx.tap(); pauseScreen = false; return; }
     if (p_inRange(x, y, bx, qy, bw, bh)) { sfx.tap(); pauseBackToTitleConfirm = true; return; }
+    return;
+  }
+  if (hardChallengeScreen) {
+    const bby = H-45, bbw = 200, bbx = (W-bbw)/2;
+    if (p_inRange(x, y, bbx, bby-22, bbw, 44)) { sfx.tap(); hardChallengeScreen = false; titleScreen = true; return; }
+    const c = getTodayHardChallenge();
+    const bw = 300, bh = 60, bx = (W-bw)/2;
+    const buyY = 240, startY = 320;
+    const bought = saveData.hardChallengeBoughtDate === todayStr();
+    if (!saveData.hardChallengeDone && (!bought || hardChallengeArmed)) {
+      if (!hardChallengeArmed) {
+        if (p_inRange(x, y, bx, buyY, bw, bh)) { buyHardChallenge(); return; }
+      } else {
+        if (p_inRange(x, y, bx, startY, bw, bh)) { startHardChallenge(); return; }
+      }
+    }
     return;
   }
   if (shopScreen) {
@@ -1439,13 +1708,28 @@ function selectWeaponAt(x, y) {
     if (p_inRange(x, y, SHOP_TAB_SPECIAL_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) { if (shopTab !== "special") { sfx.tap(); shopTab = "special"; shopScrollY = 0; } return; }
     if (p_inRange(x, y, SHOP_TAB_UPGRADE_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) { if (shopTab !== "upgrade") { sfx.tap(); shopTab = "upgrade"; shopScrollY = 0; } return; }
     if (p_inRange(x, y, SHOP_TAB_COSMETIC_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) { if (shopTab !== "cosmetic") { sfx.tap(); shopTab = "cosmetic"; shopScrollY = 0; } return; }
+    if (p_inRange(x, y, SHOP_TAB_FX_X, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H)) { if (shopTab !== "fx") { sfx.tap(); shopTab = "fx"; shopScrollY = 0; } return; }
     const bby = H-45, bbw = 200, bbx = (W-bbw)/2;
     if (p_inRange(x, y, bbx, bby-22, bbw, 44)) { sfx.tap(); shopScreen = false; titleScreen = true; return; }
-    const ly = SHOP_TAB_Y + SHOP_TAB_H + 20;
+    /* FXカテゴリのサブタブ */
+    if (shopTab === "fx") {
+      const kinds = ["kill","trail","aura","special"];
+      const labels = ["撃破","弾","オーラ","必殺"];
+      const sw = (MENU_WIDTH - 6*3)/4, sx0 = MENU_MARGIN, sy = SHOP_TAB_Y + SHOP_TAB_H + 6;
+      for (let i = 0; i < 4; i++) {
+        if (p_inRange(x, y, sx0 + i*(sw+6), sy, sw, 26)) { sfx.tap(); shopFxKind = kinds[i]; shopScrollY = 0; return; }
+      }
+    }
+    const ly = SHOP_TAB_Y + SHOP_TAB_H + (shopTab === "fx" ? 40 : 20);
     if (x < MENU_MARGIN || x > MENU_MARGIN+MENU_WIDTH || y < ly || y > H-70) return;
     const localY = y - ly + shopScrollY;
     const idx = Math.floor(localY / (MENU_ITEM_HEIGHT+MENU_GAP));
-    const list = shopTab === "weapon" ? getShopWeapons() : shopTab === "special" ? getShopSpecials() : shopTab === "upgrade" ? UPGRADE_ORDER : getShopCosmetics();
+    let list;
+    if (shopTab === "weapon") list = getShopWeapons();
+    else if (shopTab === "special") list = getShopSpecials();
+    else if (shopTab === "upgrade") list = UPGRADE_ORDER;
+    else if (shopTab === "cosmetic") list = getShopCosmetics();
+    else list = FX_ORDER.filter(k => FX_ITEMS[k].kind === shopFxKind && !isFreeFx(k));
     if (idx < 0 || idx >= list.length) return;
     if (localY % (MENU_ITEM_HEIGHT+MENU_GAP) > MENU_ITEM_HEIGHT) return;
     const k = list[idx];
@@ -1461,7 +1745,7 @@ function selectWeaponAt(x, y) {
       if (isUpgradeMaxed(k)) { showShopMessage("この強化は最大レベルです", "#ffcc00"); return; }
       if (buyUpgrade(k)) { sfx.coin(); showShopMessage(UPGRADES[k].fixed ? (shopLastMsg || `「${UPGRADES[k].name}」を購入！`) : `「${UPGRADES[k].name}」をLv${getUpgradeLevel(k)}に強化！`, "#88ff88"); shake(15); flash(UPGRADES[k].color, 6); }
       else { showShopMessage(`コインが足りません（必要: ${getUpgradePrice(k)} / 所持: ${saveData.coins}）`, "#ff6666"); shake(10); flash("#ff6666", 4); }
-    } else {
+    } else if (shopTab === "cosmetic") {
       if (ownsCosmetic(k)) {
         sfx.tap(); equipCosmetic(k);
         showShopMessage(`「${cosmetics[k].name}」を装備しました！`, "#88ff88");
@@ -1471,6 +1755,16 @@ function selectWeaponAt(x, y) {
       }
       if (buyCosmetic(k)) { sfx.coin(); showShopMessage(`「${cosmetics[k].name}」を購入しました！`, "#88ff88"); shake(15); flash("#88ff88", 6); }
       else { showShopMessage(`コインが足りません（必要: ${getCosmeticPrice(k)} / 所持: ${saveData.coins}）`, "#ff6666"); shake(10); flash("#ff6666", 4); }
+    } else {
+      /* FX */
+      if (ownsFx(k)) {
+        sfx.tap(); equipFx(k);
+        showShopMessage(`「${FX_ITEMS[k].name}」を装備しました！`, "#88ff88");
+        shake(8); flash(FX_ITEMS[k].color, 5);
+        return;
+      }
+      if (buyFx(k)) { sfx.coin(); showShopMessage(`「${FX_ITEMS[k].name}」を購入しました！`, "#88ff88"); shake(15); flash("#88ff88", 6); }
+      else { showShopMessage(`コインが足りません（必要: ${getFxPrice(k)} / 所持: ${saveData.coins}）`, "#ff6666"); shake(10); flash("#ff6666", 4); }
     }
     return;
   }
@@ -1591,6 +1885,7 @@ window.addEventListener("keydown", e => {
   initAudio();
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
   if (titleScreen && showDailyBonusPopup) { claimDailyBonus(); return; }
+  if (emergencyMenu) { if (k === "escape") { emergencyMenu = false; } return; }
   if (settingsScreen) { if (k === "escape") { settingsScreen = false; titleScreen = true; return; } return; }
   if (pauseScreen) {
     if (k === "escape") { if (pauseBackToTitleConfirm) pauseBackToTitleConfirm = false; else pauseScreen = false; return; }
@@ -1600,6 +1895,7 @@ window.addEventListener("keydown", e => {
   if (studyQuizActive && studyQuiz) { if (/^[1-4]$/.test(k)) answerStudyQuiz(Number(k)-1); return; }
   if (missionScreen) { if (k === "escape" || k === "q") { missionScreen = false; titleScreen = true; } return; }
   if (challengeScreen) { if (k === "escape" || k === "q") { challengeScreen = false; titleScreen = true; } return; }
+  if (hardChallengeScreen) { if (k === "escape" || k === "q") { hardChallengeScreen = false; titleScreen = true; } return; }
   if (studySelectScreen) {
     if (k === "escape" || k === "q") { studySelectScreen = false; titleScreen = true; }
     if (k === "1") { startStudyMode(1); return; }
@@ -1613,7 +1909,7 @@ window.addEventListener("keydown", e => {
     if (k === "s") { shopScreen = true; titleScreen = false; shopScrollY = 0; shopTab = "weapon"; return; }
     if (k === "b") { openBossSelect(); return; }
     if (k === "m") { checkDailyMissions(); missionScreen = true; titleScreen = false; return; }
-    if (k === "c") { challengeScreen = true; titleScreen = false; return; }
+    if (k === "c") { openHardChallenge(); return; }
     if (k === "t") { studySelectScreen = true; titleScreen = false; return; }
     if (k === "g") { rollGacha(); return; }
     studyMode = false; titleScreen = false; quickMode = false; fusionMode = false; applyChallenge(null);
@@ -1639,7 +1935,7 @@ window.addEventListener("keydown", e => {
   if (gameOver && k === "enter") { if (gameClear) returnToTitle(); else resetGame(); return; }
   if (k === " " && !gameOver) { tryDash(); return; }
   if (k === "escape" && !gameOver) { pauseScreen = true; pauseBackToTitleConfirm = false; return; }
-  if (k === "e" && !gameOver && !challengeNoSpecials && specialGauge >= SPECIAL_MAX && specialActive <= 0 && !studyMode) { sfx.special(); activateSpecial(); return; }
+  if (k === "e" && !gameOver && !bossMode && !challengeNoSpecials && specialGauge >= SPECIAL_MAX && specialActive <= 0 && !studyMode) { sfx.special(); activateSpecial(); return; }
   if (k === "e" && !gameOver && studyMode && studyBurstGauge >= STUDY_BURST_MAX && specialActive <= 0) { sfx.special(); activateSpecial(); return; }
 });
 window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
@@ -1649,8 +1945,10 @@ function returnToTitle() {
   titleScreen = true; gameOver = false; gameClear = false;
   weaponMenu = false; specialMenu = false; shopScreen = false;
   missionScreen = false; challengeScreen = false; studySelectScreen = false;
+  hardChallengeScreen = false; emergencyMenu = false;
   fusionMode = false; quickMode = false; fusionSelected = [];
   studyMode = false;
+  hardChallengeState.active = false;
   pauseScreen = false; pauseBackToTitleConfirm = false;
   settingsScreen = false;
   menuScrollY = 0; specialMenuScrollY = 0; shopScrollY = 0;
@@ -1694,13 +1992,20 @@ function resetGame() {
   particles = []; shockwaves = []; turrets = []; lightningBolts = [];
   afterImages = []; shootingStars = [];
   specialParticles = []; specialFireworks = [];
+  yoyoStates = []; frisbeeStates = []; chainStates = []; hammerWave = 0; batSwing = 0; hulaAngle = 0;
+  eraserOrbs = []; bubbleHornPuffs = []; karaokeWaves = []; kendamaBalls = [];
   hitStop = 0; flashScreen = 0; chromaOffset = 0;
   bgTint = 0; dangerTint = 0;
-  player.maxHp = 50 + getMaxHpBonus();
+  if (bossMode) {
+    player.maxHp = BOSS_PLAYER_HP; player.hp = BOSS_PLAYER_HP;
+  } else {
+    player.maxHp = 50 + getMaxHpBonus();
+    player.hp = player.maxHp;
+    if (challengeHalfHp || challengeGlass) player.hp = Math.max(1, Math.floor(player.maxHp/2));
+    if (challengeGlass) player.hp = 1;
+    if (hardChallengeState.active && hardChallengeState.id === "hp1boss") { player.maxHp = 1; player.hp = 1; }
+  }
   player.x = W/2; player.y = H-120;
-  player.hp = player.maxHp;
-  if (challengeHalfHp || challengeGlass) player.hp = Math.max(1, Math.floor(player.maxHp/2));
-  if (challengeGlass) player.hp = 1;
   player.cool = 0;
   player.invincible = 60 + getInvincibleBonus();
   player.dashTimer = 0; player.dashCooldown = 0;
@@ -1720,6 +2025,15 @@ function resetGame() {
   studyTimer = studyTimerMax; studyQuiz = null; studyQuizActive = false;
   studyCorrectCount = 0; studyBurstGauge = 0;
   pauseScreen = false; pauseBackToTitleConfirm = false;
+  emergencyMenu = false;
+  saveData.emergencyUsed = false;
+  if (hardChallengeState.active) {
+    hardChallengeState.hits = 0;
+    hardChallengeState.startTime = 0;
+    if (hardChallengeState.id === "time3") hardChallengeState.startTime = time;
+    if (hardChallengeState.id === "hp1boss") { player.maxHp = 1; player.hp = 1; }
+    if (hardChallengeState.id === "nosp") challengeNoSpecials = true;
+  }
   createStars(); shake(25); flash("#00ffcc", 6);
   if (bossMode) setupBossBattle();
 }
@@ -1746,7 +2060,7 @@ function tryDash() {
 
 /* ========== 必殺発動 ========== */
 function activateSpecial() {
-  if (challengeNoSpecials) return;
+  if (challengeNoSpecials || bossMode) return;
   if (studyMode && studyBurstGauge < STUDY_BURST_MAX) return;
   if (!studyMode && specialGauge < SPECIAL_MAX) return;
   specialActive = 90;
@@ -1834,7 +2148,7 @@ function fireStickyFingers() {
 }
 function fireGER() {
   gerTimer = 240;
-  player.hp = player.maxHp;
+  if (!bossMode) player.hp = player.maxHp;
   player.invincible = Math.max(player.invincible, 240);
   for (let i = enemies.length-1; i >= 0; i--) {
     const e = enemies[i];
@@ -1883,7 +2197,7 @@ function fireMadeInHeavenSpecial() {
   shake(80); flash("#ffffff", 20); chroma(30);
 }
 function fireGoldenWindSpecial() {
-  player.hp = player.maxHp;
+  if (!bossMode) player.hp = player.maxHp;
   player.invincible = Math.max(player.invincible, 120);
   for (let i = enemies.length-1; i >= 0; i--) {
     const e = enemies[i];
@@ -1904,7 +2218,7 @@ function fireGasterSpecial() {
 }
 function fireDeterminationSpecial() {
   determinationActive = 300;
-  player.hp = player.maxHp;
+  if (!bossMode) player.hp = player.maxHp;
   player.invincible = Math.max(player.invincible, 300);
   for (let i = enemies.length-1; i >= 0; i--) {
     const e = enemies[i];
@@ -2044,6 +2358,7 @@ function enemyBulletSpeedScale() {
   const lv = level;
   let s = 1 + (lv-1)*0.008;
   if (lv > 25) s += (lv-25)*0.006;
+  if (hardChallengeState.active && hardChallengeState.fastBullets) s *= 2;
   return s;
 }
 
@@ -2101,7 +2416,7 @@ function gainExperience(amount) {
   while (exp >= nextExp) {
     exp -= nextExp; level++; nextExp += 8;
     sfx.levelUp();
-    player.hp = Math.min(player.maxHp, player.hp + 8);
+    if (!bossMode) healPlayer(8);
     burst(player.x, player.y, 30, "#00ffcc"); burst(player.x, player.y, 15, "#ffffff");
     shockwaves.push({ x:player.x, y:player.y, radius:10, maxRadius:120, life:25, color:"0,255,204" });
     shake(15); flash("#00ffcc", 5);
@@ -2129,6 +2444,7 @@ function triggerPowerUp() {
 }
 function pw(k) { return (weaponPower[k] || 0) + getUpgradeLevel("startpower"); }
 function maybeDropPowerup(x, y, type) {
+  if (bossMode) return;
   let c = 0.08*(1+getUpgradeLevel("dropup")*0.15);
   if (type === "boss") c = 0.6;
   else if (type === "heavy" || type === "tank") c = 0.25;
@@ -2141,7 +2457,7 @@ function maybeDropPowerup(x, y, type) {
   }
 }
 function collectPowerup(p) {
-  if (p.kind === "heal") { player.hp = Math.min(player.maxHp, player.hp + 15); showDamage(p.x, p.y, "+15 HP", "#00ff66"); burst(p.x, p.y, 30, "#00ff66"); shake(8); }
+  if (p.kind === "heal") { if (!bossMode) { healPlayer(15); showDamage(p.x, p.y, "+15 HP", "#00ff66"); } burst(p.x, p.y, 30, "#00ff66"); shake(8); }
   else if (p.kind === "bomb") {
     for (let i = enemies.length-1; i >= 0; i--) {
       const e = enemies[i];
@@ -2192,8 +2508,20 @@ function killEnemy(idx) {
   if (bossMode && e.bm) {
     if (e.invuln) { e.hp = e.maxHp; return; }
     if (e.gateT > 0) { e.hp = e.gateHp; return; }
-    if (e.gn < 2) { bossStartGate(e); return; }
     if (bossForm < BOSS_FORM_N) { bossFormCleared(e); return; }
+    if (e.gn < 1) { bossStartGate(e); return; }
+    gameClear = true; gameOver = true;
+    missionSession.cleared = true;
+    recordGameResult(true);
+    sfx.clear();
+    shake(180); flash("#ffcc00", 50); chroma(50); hitStopAdd(50); zoomPulse = 2.5;
+    burst(e.x, e.y, 200, "#ffee00");
+    for (let k = 0; k < 25; k++) setTimeout(() => {
+      const bx = Math.random()*W, by = Math.random()*H;
+      burst(bx, by, 70, "#ffcc00"); burst(bx, by, 35, "#ffffff"); burst(bx, by, 20, "#ff00ff");
+      flash("#ffffff", 6); shake(35);
+    }, k*110);
+    return;
   }
   if (e.type === "boss" && !e.phase2 && bossKillCount < BOSS_KILL_TARGET && !studyMode && !quickMode && !bossMode) {
     e.phase2 = true;
@@ -2251,7 +2579,7 @@ function killEnemy(idx) {
   if (e.type === "boss") {
     bossActive = false;
     shockwaves.push({ x:e.x, y:e.y, radius:10, maxRadius:800, life:60, color:"255,0,68" });
-    for (let i = 0; i < 3; i++) powerups.push({ x: e.x+(i-1)*40, y: e.y, vy: 1.2, r: 14, kind: i === 0 ? "heal" : i === 1 ? "bomb" : "exp", life: 600, bob: Math.random()*TAU });
+    if (!bossMode) for (let i = 0; i < 3; i++) powerups.push({ x: e.x+(i-1)*40, y: e.y, vy: 1.2, r: 14, kind: i === 0 ? "heal" : i === 1 ? "bomb" : "exp", life: 600, bob: Math.random()*TAU });
   }
   enemies.splice(idx, 1);
   if (e.type === "splitter") {
@@ -2271,15 +2599,17 @@ function escapeEnemy(idx) {
   gainExperience(1);
   missionSession.kills++;
   specialGauge = Math.min(SPECIAL_MAX, specialGauge + 0.5*getGaugeMult());
-  let c = 0.08;
-  if (e.type === "boss") c = 0.6;
-  else if (e.type === "heavy" || e.type === "tank") c = 0.25;
-  else if (e.type === "shooter" || e.type === "splitter") c = 0.15;
-  else if (e.type === "dasher") c = 0.10;
-  if (Math.random() < c) {
-    const kinds = ["heal","bomb","exp"];
-    const k = kinds[Math.floor(Math.random()*kinds.length)];
-    powerups.push({ x: 40+Math.random()*(W-80), y: -30, vy: 1.2, r: 14, kind: k, life: 600, bob: Math.random()*TAU });
+  if (!bossMode) {
+    let c = 0.08;
+    if (e.type === "boss") c = 0.6;
+    else if (e.type === "heavy" || e.type === "tank") c = 0.25;
+    else if (e.type === "shooter" || e.type === "splitter") c = 0.15;
+    else if (e.type === "dasher") c = 0.10;
+    if (Math.random() < c) {
+      const kinds = ["heal","bomb","exp"];
+      const k = kinds[Math.floor(Math.random()*kinds.length)];
+      powerups.push({ x: 40+Math.random()*(W-80), y: -30, vy: 1.2, r: 14, kind: k, life: 600, bob: Math.random()*TAU });
+    }
   }
   enemies.splice(idx, 1);
 }
@@ -2287,7 +2617,7 @@ function escapeEnemy(idx) {
 /* ========== 武器発射 ========== */
 const DMG_BOOST = { freeze:2, iceshard:1.5, umbrella:2, piano:1.5, tornado:2, cluster:1.6, sonic:2, snake:1.5, missile:1.2, crossbow:1.2 };
 function addBullet(d) { const b = { x:player.x, y:player.y, vx:0, vy:-10, size:4, damage:1, life:600, ...d }; const m = DMG_BOOST[b.type]; if (m) b.damage *= m; bullets.push(b); }
-const BR = () => bossMode ? 3 : 1; /* ボス戦では近距離武器の射程を拡張 */
+const BR = () => bossMode ? 3 : 1;
 function fireNormal() {
   const p = pw("normal"), c = 1 + (level-1) + p*2, sp = .12;
   const st = -Math.PI/2 - sp*(c-1)/2;
@@ -2615,7 +2945,7 @@ function fireUmbrella() {
     const a = i/c*TAU;
     addBullet({ vx: Math.cos(a)*11, vy: Math.sin(a)*11, size:6, damage: 1.8+p*0.5, type:"umbrella", hue: 320, trail:true });
   }
-  player.invincible = Math.max(player.invincible, 30);
+  if (!bossMode) player.invincible = Math.max(player.invincible, 30);
   sfx.special(); shake(8); flash("#ff88cc", 5); chroma(8);
 }
 function fireOraOra() {
@@ -2674,8 +3004,7 @@ function fireGoldenWind() {
     const a = i/c*TAU;
     addBullet({ vx: Math.cos(a)*12, vy: Math.sin(a)*12, size: 7+p, damage: 3+p*0.8, type:"goldenwind", hue: 50, trail:true });
   }
-  player.hp = Math.min(player.maxHp, player.hp + 4+p*2);
-  showDamage(player.x, player.y-30, "+HP", "#ffcc44");
+  if (!bossMode) { healPlayer(4+p*2); showDamage(player.x, player.y-30, "+HP", "#ffcc44"); }
   sfx.shootHeavy(); shake(8); flash("#ffcc44", 6);
 }
 function fireFriendship() {
@@ -2755,13 +3084,287 @@ function fireEcho() {
 }
 function fireDetermination() {
   const p = pw("determination");
-  determinationActive = 180+p*30;
-  player.hp = Math.min(player.maxHp, player.hp + 20+p*5);
+  if (!bossMode) determinationActive = 180+p*30;
+  if (!bossMode) healPlayer(20+p*5);
   showDamage(player.x, player.y-40, "DETERMINATION!", "#ff0000");
   shockwaves.push({ x:player.x, y:player.y, radius:10, maxRadius:340, life:30, color:"255,0,0" });
   for (let j = enemies.length-1; j >= 0; j--) { const e = enemies[j]; if (e && Math.hypot(e.x-player.x, e.y-player.y) < 340*BR()+e.r) { const dm = 18+p*5; e.hp -= dm; showBigDamage(e.x, e.y, dm, "#ff0000"); if (e.hp <= 0) killEnemy(j); } }
   burst(player.x, player.y, 100, "#ff0000"); burst(player.x, player.y, 50, "#ffffff");
   sfx.special(); shake(20); flash("#ff0000", 15); chroma(20);
+}
+
+/* ========== 新武器 (大幅強化) ========== */
+function fireYoyo() {
+  const p = pw("yoyo"), c = 2+Math.floor(level/2)+p;
+  for (let i = 0; i < c; i++) {
+    const a = -Math.PI/2 + (i-(c-1)/2)*0.3;
+    yoyoStates.push({ x: player.x, y: player.y, vx: Math.cos(a)*11, vy: Math.sin(a)*11, phase: 0, life: 130, damage: (7+level*.9+p*2.5), hitSet: new Set(), color: "#ff66aa", r: 12 });
+  }
+  sfx.shoot(); shake(3);
+}
+function fireFrisbee() {
+  const p = pw("frisbee"), c = 1+Math.floor(p/2);
+  for (let i = 0; i < c; i++) {
+    const side = (i === 0 ? 1 : -1);
+    frisbeeStates.push({ x: player.x, y: player.y-10, vx: 13*side, vy: -1, life: 320, damage: (6+level*.7+p*2), hitSet: new Set(), returning: false, color: "#66ffcc", spin: 0, r: 15 });
+  }
+  sfx.shoot(); shake(3);
+}
+function fireChainSickle() {
+  const p = pw("chainSickle");
+  const a = -Math.PI/2, reach = 170+level*2+p*25;
+  const tx = player.x + Math.cos(a)*reach, ty = player.y + Math.sin(a)*reach;
+  chainStates.push({ x: player.x, y: player.y, tx, ty, life: 20, damage: (12+level*1.2+p*3), hitSet: new Set(), color: "#c0c0c0" });
+  sfx.shootHeavy(); shake(8); flash("#c0c0c0", 4);
+}
+function fireHammer() {
+  const p = pw("hammer"), r = 130+level*2+p*20;
+  hammerWave = 20;
+  for (let i = enemies.length-1; i >= 0; i--) {
+    const e = enemies[i];
+    if (!e) continue;
+    if (Math.hypot(e.x-player.x, e.y-player.y) < r+e.r) {
+      const dmg = (14+level*1.2+p*3.5);
+      e.hp -= dmg; showBigDamage(e.x, e.y, dmg, "#ffaa66");
+      e.stunTimer = 60;
+      burst(e.x, e.y, 25, "#ffaa66");
+      if (e.hp <= 0) killEnemy(i);
+    }
+  }
+  shockwaves.push({ x: player.x, y: player.y, radius: 10, maxRadius: r*1.4, life: 22, color: "255,170,102" });
+  sfx.shootHeavy(); shake(20); flash("#ffaa66", 8); chroma(10); hitStopAdd(5);
+}
+function fireBat() {
+  const p = pw("bat");
+  batSwing = 14;
+  const reach = 120+level*2+p*15, arc = Math.PI*0.8;
+  for (let i = enemyBullets.length-1; i >= 0; i--) {
+    const b = enemyBullets[i];
+    const dx = b.x-player.x, dy = b.y-player.y, d = Math.hypot(dx, dy);
+    if (d > reach+b.r) continue;
+    const at = Math.atan2(dy, dx);
+    let diff = at - (-Math.PI/2);
+    while (diff > Math.PI) diff -= TAU;
+    while (diff < -Math.PI) diff += TAU;
+    if (Math.abs(diff) > arc/2) continue;
+    enemyBullets.splice(i, 1);
+    const t = nearestEnemy(b.x, b.y);
+    const a2 = t ? Math.atan2(t.y-b.y, t.x-b.x) : -Math.PI/2;
+    bullets.push({ x:b.x, y:b.y, vx:Math.cos(a2)*18, vy:Math.sin(a2)*18, size:8, damage: (8+p*2+level*.6), hue:40, life:150, trail:true, type:"turret" });
+  }
+  for (let i = enemies.length-1; i >= 0; i--) {
+    const e = enemies[i];
+    if (!e) continue;
+    const d = Math.hypot(e.x-player.x, e.y-player.y);
+    if (d > reach+e.r) continue;
+    const at = Math.atan2(e.y-player.y, e.x-player.x);
+    let diff = at - (-Math.PI/2);
+    while (diff > Math.PI) diff -= TAU;
+    while (diff < -Math.PI) diff += TAU;
+    if (Math.abs(diff) > arc/2) continue;
+    const dmg = (9+level*.9+p*2.2);
+    e.hp -= dmg; showDamage(e.x, e.y, dmg, "#e0c090");
+    if (e.hp <= 0) killEnemy(i);
+  }
+  sfx.shoot(); shake(10); flash("#e0c090", 4);
+}
+function fireHulaHoop() {
+  sfx.tap();
+}
+function fireEraser() {
+  const p = pw("eraser"), r = 110+level*3+p*18;
+  eraserOrbs.push({ x: player.x, y: player.y, life: 120, r, p });
+  let n = 0;
+  /* 敵弾消去 → 反撃弾 */
+  for (let i = enemyBullets.length-1; i >= 0; i--) {
+    const b = enemyBullets[i];
+    if (Math.hypot(b.x-player.x, b.y-player.y) < r+b.r) {
+      enemyBullets.splice(i, 1); n++;
+      const t = nearestEnemy(b.x, b.y), a = t ? Math.atan2(t.y-b.y, t.x-b.x) : -Math.PI/2;
+      bullets.push({ x:b.x, y:b.y, vx:Math.cos(a)*17, vy:Math.sin(a)*17, size:7, damage:(5+p*1.5+level*.4), hue:0, life:140, trail:true });
+    }
+  }
+  /* 範囲内の敵にダメージ */
+  for (let j = enemies.length-1; j >= 0; j--) {
+    const e = enemies[j];
+    if (!e) continue;
+    if (Math.hypot(e.x-player.x, e.y-player.y) < r+e.r) {
+      const dmg = (8+level*.8+p*2);
+      e.hp -= dmg; showDamage(e.x, e.y, dmg, "#ffffff");
+      if (e.hp <= 0) killEnemy(j);
+    }
+  }
+  if (n > 0) { showDamage(player.x, player.y-30, `ERASE x${n}`, "#ffffff"); }
+  shockwaves.push({ x:player.x, y:player.y, radius:10, maxRadius:r, life:16, color:"255,255,255" });
+  sfx.tap(); shake(6); flash("#ffffff", 5);
+}
+function fireBubbleHorn() {
+  const p = pw("bubbleHorn"), c = 10+p*3;
+  for (let i = 0; i < c; i++) {
+    const a = -Math.PI/2 + (Math.random()-.5)*1.2;
+    bubbleHornPuffs.push({ x: player.x, y: player.y, vx: Math.cos(a)*(8+Math.random()*5), vy: Math.sin(a)*(8+Math.random()*5), life: 100, r: 10+Math.random()*8, damage:(5+level*.7+p*1.8) });
+  }
+  sfx.shoot(); shake(3); flash("#aaddff", 3);
+}
+function fireKaraoke() {
+  const p = pw("karaoke");
+  karaokeWaves.push({ x: player.x, y: player.y, angle: -Math.PI/2, life: 45, damage:(9+level*.9+p*2.5), hitSet: new Set(), color: "#ff99cc", range: 300+level*4+p*30 });
+  sfx.special(); shake(6); flash("#ff99cc", 5); chroma(6);
+}
+function fireKendama() {
+  const p = pw("kendama"), c = 2+Math.floor(p/2);
+  for (let i = 0; i < c; i++) {
+    const a = -Math.PI/2 + (i-(c-1)/2)*0.4;
+    kendamaBalls.push({ x: player.x, y: player.y, vx: Math.cos(a)*12, vy: Math.sin(a)*12, life: 220, damage:(10+level*.9+p*2.5), bounce: 0, hitSet: new Set(), color: "#c8a06a" });
+  }
+  sfx.shoot(); shake(4);
+}
+function updateExtraWeapons() {
+  for (let i = yoyoStates.length-1; i >= 0; i--) {
+    const y = yoyoStates[i];
+    y.phase += 0.06; y.life--;
+    y.x += y.vx; y.y += y.vy;
+    y.vy += 0.35;
+    y.vx *= 0.985;
+    if (y.life < 60) {
+      const dx = player.x-y.x, dy = player.y-y.y, d = Math.hypot(dx, dy)||1;
+      y.vx += dx/d*0.9; y.vy += dy/d*0.9;
+      y.vx *= 0.94; y.vy *= 0.94;
+      if (d < 20) { yoyoStates.splice(i,1); continue; }
+    }
+    for (let j = enemies.length-1; j >= 0; j--) {
+      const e = enemies[j];
+      if (y.hitSet.has(e)) continue;
+      if (Math.hypot(e.x-y.x, e.y-y.y) < e.r+y.r) {
+        y.hitSet.add(e);
+        e.hp -= y.damage; showDamage(e.x, e.y, y.damage, "#ff66aa");
+        burst(y.x, y.y, 12, "#ff66aa");
+        if (e.hp <= 0) killEnemy(j);
+      }
+    }
+  }
+  for (let i = frisbeeStates.length-1; i >= 0; i--) {
+    const f = frisbeeStates[i];
+    f.x += f.vx; f.y += f.vy; f.life--; f.spin += 0.3;
+    if (f.x < f.r) { f.x = f.r; f.vx = -f.vx; }
+    if (f.x > W-f.r) { f.x = W-f.r; f.vx = -f.vx; }
+    if (!f.returning && f.life < 200) f.returning = true;
+    if (f.returning) {
+      const dx = player.x-f.x, dy = player.y-f.y, d = Math.hypot(dx, dy)||1;
+      f.vx += dx/d*0.5; f.vy += dy/d*0.5;
+      const s = Math.hypot(f.vx, f.vy)||1;
+      f.vx = f.vx/s*11; f.vy = f.vy/s*11;
+      if (d < 22) { frisbeeStates.splice(i,1); continue; }
+    }
+    for (let j = enemies.length-1; j >= 0; j--) {
+      const e = enemies[j];
+      if (f.hitSet.has(e)) continue;
+      if (Math.hypot(e.x-f.x, e.y-f.y) < e.r+f.r) {
+        f.hitSet.add(e);
+        e.hp -= f.damage; showDamage(e.x, e.y, f.damage, "#66ffcc");
+        burst(f.x, f.y, 12, "#66ffcc");
+        if (e.hp <= 0) killEnemy(j);
+      }
+    }
+    if (f.life <= 0) frisbeeStates.splice(i,1);
+  }
+  for (let i = chainStates.length-1; i >= 0; i--) {
+    const c = chainStates[i];
+    c.life--;
+    if (c.life === 18) {
+      for (let j = enemies.length-1; j >= 0; j--) {
+        const e = enemies[j];
+        if (!e || c.hitSet.has(e)) continue;
+        if (Math.hypot(e.x-c.tx, e.y-c.ty) < e.r+30) {
+          c.hitSet.add(e);
+          const d = Math.hypot(e.x-player.x, e.y-player.y)||1;
+          const dx = player.x-e.x, dy = player.y-e.y;
+          e.x += dx/d*80; e.y += dy/d*80;
+          e.hp -= c.damage; showDamage(e.x, e.y, c.damage, "#c0c0c0");
+          if (e.hp <= 0) killEnemy(j);
+        }
+      }
+    }
+    if (c.life <= 0) chainStates.splice(i,1);
+  }
+  if (hammerWave > 0) hammerWave--;
+  if (batSwing > 0) batSwing--;
+  const p = pw("hulaHoop");
+  if (selectedWeapon === "hulaHoop" || activeWeapons.includes("hulaHoop")) {
+    hulaAngle += 0.08;
+    const r = 60+level*2+p*12;
+    const dmg = (5+level*.5+p*1.4);
+    for (let i = enemies.length-1; i >= 0; i--) {
+      const e = enemies[i];
+      if (!e) continue;
+      e.hulaCD = Math.max(0, (e.hulaCD||0)-1);
+      if (e.hulaCD > 0) continue;
+      if (Math.hypot(e.x-player.x, e.y-player.y) < r+e.r) {
+        e.hp -= dmg; showDamage(e.x, e.y, dmg, "#ff88ff");
+        e.hulaCD = 10;
+        if (e.hp <= 0) killEnemy(i);
+      }
+    }
+  }
+  for (let i = eraserOrbs.length-1; i >= 0; i--) {
+    const o = eraserOrbs[i]; o.life--;
+    if (o.life <= 0) eraserOrbs.splice(i,1);
+  }
+  for (let i = bubbleHornPuffs.length-1; i >= 0; i--) {
+    const b = bubbleHornPuffs[i];
+    b.x += b.vx; b.y += b.vy; b.vx *= 0.97; b.vy *= 0.97; b.life--;
+    for (let j = enemies.length-1; j >= 0; j--) {
+      const e = enemies[j];
+      if (!e) continue;
+      if (Math.hypot(e.x-b.x, e.y-b.y) < e.r+b.r) {
+        e.hp -= b.damage; showDamage(e.x, e.y, b.damage, "#aaddff");
+        if (e.hp <= 0) killEnemy(j);
+        bubbleHornPuffs.splice(i,1);
+        break;
+      }
+    }
+    if (b.life <= 0) bubbleHornPuffs.splice(i,1);
+  }
+  for (let i = karaokeWaves.length-1; i >= 0; i--) {
+    const w = karaokeWaves[i];
+    w.life--;
+    for (let j = enemies.length-1; j >= 0; j--) {
+      const e = enemies[j];
+      if (!e || w.hitSet.has(e)) continue;
+      const dx = e.x-w.x, dy = e.y-w.y, d = Math.hypot(dx, dy);
+      if (d > w.range) continue;
+      const at = Math.atan2(dy, dx);
+      let diff = at - w.angle;
+      while (diff > Math.PI) diff -= TAU;
+      while (diff < -Math.PI) diff += TAU;
+      if (Math.abs(diff) > Math.PI/3) continue;
+      w.hitSet.add(e);
+      e.hp -= w.damage;
+      e.slowTimer = Math.max(e.slowTimer||0, 90);
+      e.slowFactor = 0.3;
+      showDamage(e.x, e.y, w.damage, "#ff99cc");
+      if (e.hp <= 0) killEnemy(j);
+    }
+    if (w.life <= 0) karaokeWaves.splice(i,1);
+  }
+  for (let i = kendamaBalls.length-1; i >= 0; i--) {
+    const k = kendamaBalls[i];
+    k.x += k.vx; k.y += k.vy; k.vy += 0.4; k.life--;
+    if (k.y > H-20) { k.y = H-20; k.vy = -Math.abs(k.vy)*0.8; k.bounce++; }
+    if (k.bounce > 4) k.life = Math.min(k.life, 10);
+    for (let j = enemies.length-1; j >= 0; j--) {
+      const e = enemies[j];
+      if (!e || k.hitSet.has(e)) continue;
+      if (Math.hypot(e.x-k.x, e.y-k.y) < e.r+10) {
+        k.hitSet.add(e);
+        e.hp -= k.damage; e.stunTimer = 60;
+        showDamage(e.x, e.y, k.damage, "#c8a06a");
+        burst(k.x, k.y, 12, "#c8a06a");
+        if (e.hp <= 0) killEnemy(j);
+      }
+    }
+    if (k.life <= 0 || k.x < -50 || k.x > W+50) kendamaBalls.splice(i,1);
+  }
 }
 
 /* ========== 周回系 ========== */
@@ -2943,7 +3546,7 @@ function updateJoJoWeapons() {
   }
 }
 function updateUndertaleWeapons() {
-  if (determinationActive > 0) { determinationActive--; player.invincible = Math.max(player.invincible, 2); }
+  if (determinationActive > 0) { determinationActive--; if (!bossMode) player.invincible = Math.max(player.invincible, 2); }
   for (let i = boneBarriers.length-1; i >= 0; i--) {
     const bb = boneBarriers[i];
     bb.y += bb.vy; bb.life--;
@@ -3003,7 +3606,7 @@ function updateUndertaleWeapons() {
 /* ========== 発射ディスパッチャ ========== */
 function fireWeapon(k) {
   const p = pw(k);
-  if (k === "orbit" || k === "lightning" || k === "chainsaw") return;
+  if (k === "orbit" || k === "lightning" || k === "chainsaw" || k === "hulaHoop") return;
   const sm = madeInHeavenTimer > 0 ? 0.4 : 1;
   if (k === "turret" || k === "drone") { if (weaponCools[k] > 0) { weaponCools[k]--; return; } if (k === "turret") deployTurret(); else fireDrone(); weaponCools[k] = Math.max(15, 100-level*4-p*8); return; }
   if (k === "mine" || k === "cactus") { if (weaponCools[k] > 0) { weaponCools[k]--; return; } if (k === "mine") fireMine(); else fireCactus(); weaponCools[k] = Math.max(20, 100-level*3-p*5); return; }
@@ -3071,6 +3674,17 @@ function fireWeapon(k) {
   else if (k === "dice") { fireDice(); weaponCools[k] = Math.max(5, (16-Math.floor(level/2)-cdr)*sm); }
   else if (k === "berserk") { fireBerserk(); weaponCools[k] = Math.max(2, (10-Math.round((1-Math.max(0, player.hp)/player.maxHp)*7)-cdr)*sm); }
   else if (k === "echo") { fireEcho(); weaponCools[k] = Math.max(3, (13-Math.floor(level/2)-cdr)*sm); }
+  /* 新武器 */
+  else if (k === "yoyo") { fireYoyo(); weaponCools[k] = Math.max(3, (14-Math.floor(level/2)-cdr)*sm); }
+  else if (k === "frisbee") { fireFrisbee(); weaponCools[k] = Math.max(5, (22-Math.floor(level/2)-cdr)*sm); }
+  else if (k === "chainSickle") { fireChainSickle(); weaponCools[k] = Math.max(5, (18-Math.floor(level/2)-cdr)*sm); }
+  else if (k === "hammer") { fireHammer(); weaponCools[k] = Math.max(8, (34-level*2-cdr)*sm); }
+  else if (k === "bat") { fireBat(); weaponCools[k] = Math.max(3, (13-Math.floor(level/2)-cdr)*sm); }
+  else if (k === "hulaHoop") { fireHulaHoop(); weaponCools[k] = 20; }
+  else if (k === "eraser") { fireEraser(); weaponCools[k] = Math.max(10, (34-level*2-cdr)*sm); }
+  else if (k === "bubbleHorn") { fireBubbleHorn(); weaponCools[k] = Math.max(5, (16-Math.floor(level/2)-cdr)*sm); }
+  else if (k === "karaoke") { fireKaraoke(); weaponCools[k] = Math.max(7, (22-Math.floor(level/2)-cdr)*sm); }
+  else if (k === "kendama") { fireKendama(); weaponCools[k] = Math.max(5, (18-Math.floor(level/2)-cdr)*sm); }
 }
 function shoot() {
   if (!selectedWeapon && activeWeapons.length === 0) return;
@@ -3082,6 +3696,22 @@ function shoot() {
 let reviveUsed = 0, runShield = 0;
 function damagePlayer(amount, inv) {
   if (gameOver || player.invincible > 0) return;
+  if (bossMode) {
+    player.hp -= amount;
+    player.invincible = inv;
+    combo = 0; comboTimer = 0;
+    sfx.playerHit();
+    shake(50); flash("#ff0044", 12); chroma(15); hitStopAdd(8);
+    burst(player.x, player.y, 70, "#ff0044"); burst(player.x, player.y, 35, "#ffffff");
+    if (player.hp <= 0) { player.hp = 0; gameOver = true; recordGameResult(false); sfx.gameOver(); shake(120); flash("#ffffff", 25); }
+    return;
+  }
+  /* 高難度チャレンジ: HP1でボス撃破 or 被弾3回以内 */
+  if (hardChallengeState.active) {
+    hardChallengeState.hits++;
+    if (hardChallengeState.id === "hp1boss") { player.hp = 0; gameOver = true; recordGameResult(false); sfx.gameOver(); shake(120); flash("#ffffff", 25); return; }
+    if (hardChallengeState.id === "noHit3" && hardChallengeState.hits > 3) { player.hp = 0; gameOver = true; recordGameResult(false); sfx.gameOver(); shake(120); flash("#ffffff", 25); return; }
+  }
   if (runShield > 0) { runShield--; player.invincible = 90; showBigDamage(player.x, player.y-40, "BARRIER BLOCK!", "#66ccff"); shockwaves.push({ x:player.x, y:player.y, radius:10, maxRadius:200, life:25, color:"102,204,255" }); return; }
   if (challengeOneHit) { sfx.playerHit(); player.hp = 0; gameOver = true; recordGameResult(false); sfx.gameOver(); shake(120); flash("#ffffff", 25); return; }
   const f = amount*getDefenseMult();
@@ -3120,6 +3750,26 @@ function recordGameResult(cleared) {
     saveData.coins = (saveData.coins||0) + e; saveData.totalCoinsEarned = (saveData.totalCoinsEarned||0) + e; lastEarnedCoins = e;
     if (cleared) { saveData.bossClears = (saveData.bossClears||0) + 1; const t = Math.floor(time/60); if (!saveData.bossBestTime || t < saveData.bossBestTime) saveData.bossBestTime = t; }
     writeSave(); updateMissionProgressFromSession();
+    return;
+  }
+  /* 高難度チャレンジ報酬 */
+  if (hardChallengeState.active) {
+    if (cleared) {
+      const reward = 10000;
+      saveData.coins = (saveData.coins||0) + reward;
+      saveData.totalCoinsEarned = (saveData.totalCoinsEarned||0) + reward;
+      lastEarnedCoins = reward;
+      saveData.hardChallengeDone = true;
+      hardChallengeArmed = false;
+      showBigDamage(W/2, H/2, `HARD CLEAR! +${reward}`, "#ffd700");
+    } else {
+      lastEarnedCoins = 0;
+      /* 払い損: すでに5000消費済み、返金なし */
+      hardChallengeArmed = false;
+    }
+    saveData.hardChallengeBoughtDate = todayStr();
+    writeSave();
+    updateMissionProgressFromSession();
     return;
   }
   const k = studyMode ? "study" : (fusionMode && activeWeapons.length > 1 ? activeWeapons.join("+") : selectedWeapon);
@@ -3414,13 +4064,14 @@ function updateEnemies() {
     if (!e) { enemies.splice(i,1); continue; }
     if (e.chakramCD > 0) e.chakramCD--;
     if (e._chainsawCD > 0) e._chainsawCD--;
+    if (e.stunTimer > 0) e.stunTimer--;
     e.slowTimer = Math.max(0, (e.slowTimer || 0) - 1);
     const slow = e.slowTimer > 0 ? (e.slowFactor || .4) : 1;
     const frozen = e.slowTimer > 0 ? 2 : 1;
     if (e.poisonTime > 0) { e.poisonTime--; e.hp -= e.poisonDPS || 0; if (time % 30 === 0) showDamage(e.x, e.y, (e.poisonDPS||0)*30, "#88ff44"); if (e.hp <= 0) { killEnemy(i); continue; } }
     if (e.bleedTimer > 0) { e.bleedTimer--; e.hp -= e.bleedDPS || 0; if (time % 30 === 0) showDamage(e.x, e.y, (e.bleedDPS||0)*30, "#ff4444"); if (e.hp <= 0) { killEnemy(i); continue; } }
     const floating = e.floatTime > 0; if (floating) { e.floatTime--; e.y += Math.sin(time*0.2+e.x)*0.5; e.x += Math.cos(time*0.15+e.y)*0.3; if (e.floatTime === 0) burst(e.x, e.y, 15, "#aaddff"); }
-    if (!isStopped && !floating) {
+    if (!isStopped && !floating && !(e.stunTimer > 0)) {
       if (e.flying) { e.x += e.vx; e.y += e.vy; e.vx *= .94; e.vy *= .94; if (Math.hypot(e.vx, e.vy) < 1) e.flying = false; }
       else {
         if (e.type === "orbiter") { e.orbitPhase += 0.05; e.y += e.speed*0.4*slow; e.x += Math.sin(e.orbitPhase)*2; }
@@ -3522,7 +4173,7 @@ function updateEnemies() {
     if (killed) continue;
     if (!enemies[i]) continue;
     if (e.y > H+60 && e.type !== "boss") { escapeEnemy(i); continue; }
-    if (!isStopped && Math.random() < e.shootRate * 0.5) fireEnemyBullet(e);
+    if (!isStopped && e.stunTimer <= 0 && Math.random() < e.shootRate * 0.5) fireEnemyBullet(e);
   }
 }
 function fireEnemyBullet(e) {
@@ -3621,6 +4272,7 @@ function update() {
   updateSpecials();
   updateJoJoWeapons();
   updateUndertaleWeapons();
+  updateExtraWeapons();
   if (pauseScreen || settingsScreen) return;
   if (studyMode && !titleScreen && !weaponMenu && !specialMenu && !shopScreen && !gameOver && !missionScreen && !challengeScreen && !studySelectScreen) {
     if (studyQuizActive) { studyQuizTimeLeft--; if (studyQuizTimeLeft <= 0) { flash("#ff6666", 8); showDamage(player.x, player.y-60, "時間切れ…", "#ff6666"); studyQuizActive = false; studyQuiz = null; studyTimer = studyTimerMax; } }
@@ -3633,14 +4285,22 @@ function update() {
   if (flashScreen > 0) flashScreen--;
   if (chromaOffset > 0) chromaOffset *= 0.88;
   if (hitStop > 0) { hitStop--; return; }
-  if (titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen) return;
+  if (titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || hardChallengeScreen) return;
+  if (emergencyMenu) return;
   if (specialActive > 0) return;
   if (studyQuizActive) return;
   time++; if (time <= 1) reviveUsed = 0;
   if (time === 1) {
-    runShield = 0; const u = saveData.upgrades || {};
-    if ((u.boostticket || 0) > 0) { u.boostticket--; for (const k of activeWeapons) weaponPower[k] = (weaponPower[k] || 0) + 2; showBigDamage(player.x, player.y-40, "BOOST! 武器+2", "#ff4488"); writeSave(); }
-    if ((u.shieldticket || 0) > 0) { u.shieldticket--; runShield = 1; showDamage(player.x, player.y-70, "🛡 BARRIER READY", "#66ccff"); writeSave(); }
+    runShield = 0;
+    if (!bossMode) {
+      const u = saveData.upgrades || {};
+      if ((u.boostticket || 0) > 0) { u.boostticket--; for (const k of activeWeapons) weaponPower[k] = (weaponPower[k] || 0) + 2; showBigDamage(player.x, player.y-40, "BOOST! 武器+2", "#ff4488"); writeSave(); }
+      if ((u.shieldticket || 0) > 0) { u.shieldticket--; runShield = 1; showDamage(player.x, player.y-70, "🛡 BARRIER READY", "#66ccff"); writeSave(); }
+    }
+  }
+  /* 高難度チャレンジ: 3分以内 */
+  if (hardChallengeState.active && hardChallengeState.id === "time3" && time - hardChallengeState.startTime > 3*60*60) {
+    gameOver = true; recordGameResult(false); sfx.gameOver();
   }
   rainbowHue = (rainbowHue+3)%360;
   difficulty = Math.min(3, 1+time/1500);
@@ -3662,7 +4322,15 @@ function update() {
   if (comboTimer > 0) { comboTimer--; if (comboTimer === 0) combo = 0; }
   if (combo > missionSession.maxCombo) missionSession.maxCombo = combo;
   if (player.invincible > 0) player.invincible--;
-  if (vampireHeal > 0) { const h = Math.min(vampireHeal, 0.5); player.hp = Math.min(player.maxHp, player.hp+h); vampireHeal -= h; }
+  if (vampireHeal > 0) {
+    const h = Math.min(vampireHeal, 0.5);
+    if (bossMode) {
+      player.hp = Math.min(BOSS_PLAYER_HP, player.hp + h);
+    } else {
+      player.hp = Math.min(player.maxHp, player.hp + h);
+    }
+    vampireHeal -= h;
+  }
   updatePlayer();
   if (bossMode) updateBossBattle();
   const wc = Math.max(1, activeWeapons.length);
@@ -3675,7 +4343,8 @@ function update() {
   if (Math.random() < sr*0.7) spawnEnemy();
   if (level > 4 && Math.random() < (level-4)*0.006*wm) spawnEnemy();
   if (level > 8 && Math.random() < (level-8)*0.008*wm) { spawnEnemy(); spawnEnemy(); }
-  let me = Math.min(60, 8+Math.floor(level*1.2*wm));
+  /* 通常モードの最大出現数 1/2 */
+  let me = Math.min(30, 8+Math.floor(level*1.2*wm));
   if (challengeEnemyRush) me *= 2;
   if (enemies.length < me && Math.random() < 0.15) spawnEnemy();
   shoot();
@@ -3695,6 +4364,20 @@ function drawPlayer() {
   if (kingCrimsonTimer > 0) { ctx.save(); ctx.shadowBlur = 40; ctx.shadowColor = "#cc0044"; ctx.strokeStyle = "#cc0044"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(player.x, player.y, player.drawR+12+Math.sin(time*0.4)*4, 0, TAU); ctx.stroke(); ctx.restore(); }
   if (gerTimer > 0) { ctx.save(); ctx.shadowBlur = 50; ctx.shadowColor = "#ffdd00"; ctx.strokeStyle = "#ffdd00"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(player.x, player.y, player.drawR+14+Math.sin(time*0.5)*5, 0, TAU); ctx.stroke(); ctx.restore(); }
   if (theWorldTimer > 0) { ctx.save(); ctx.shadowBlur = 50; ctx.shadowColor = "#ffee00"; ctx.strokeStyle = "#ffee00"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(player.x, player.y, player.drawR+16+Math.sin(time*0.6)*5, 0, TAU); ctx.stroke(); ctx.restore(); }
+  /* F: オーラ */
+  const aura = saveData.equippedAuraFx || "fx_aura_default";
+  if (aura !== "fx_aura_default") {
+    ctx.save();
+    const ac = FX_ITEMS[aura] ? FX_ITEMS[aura].color : "#00ffcc";
+    ctx.globalAlpha = .35 + .15*Math.sin(time*.2);
+    ctx.shadowBlur = 30; ctx.shadowColor = ac;
+    ctx.strokeStyle = ac; ctx.lineWidth = 3;
+    for (let k = 0; k < 3; k++) {
+      const rr = player.drawR+8+k*6 + Math.sin(time*.15+k)*3;
+      ctx.beginPath(); ctx.arc(player.x, player.y, rr, 0, TAU); ctx.stroke();
+    }
+    ctx.restore();
+  }
   for (const a of afterImages) { ctx.save(); ctx.globalAlpha = (a.life/a.maxLife)*0.6; ctx.shadowBlur = 20; ctx.shadowColor = getPlayerColor(); ctx.fillStyle = getPlayerColor(); ctx.beginPath(); ctx.arc(a.x, a.y, a.r, 0, TAU); ctx.fill(); ctx.restore(); }
   if (player.invincible > 0 && Math.floor(time/4)%2) return;
   ctx.save();
@@ -3806,6 +4489,7 @@ function drawEnemies() {
     if (e.bleedTimer > 0) { ctx.strokeStyle = "#ff4444"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(e.x, e.y, e.r+6, 0, TAU); ctx.stroke(); }
     if (e.floatTime > 0) { ctx.strokeStyle = "#aaddff"; ctx.lineWidth = 3; ctx.fillStyle = "rgba(170,221,255,.4)"; ctx.beginPath(); ctx.arc(e.x, e.y, e.r+12, 0, TAU); ctx.fill(); ctx.stroke(); }
     if (e.isBomb) { ctx.strokeStyle = "#ff66aa"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(e.x, e.y, e.r+10+Math.sin(time*0.5)*3, 0, TAU); ctx.stroke(); }
+    if (e.stunTimer > 0) { ctx.strokeStyle = "#ffff66"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(e.x, e.y - e.r - 10, 6, 0, TAU); ctx.stroke(); }
     ctx.restore();
     if (e.type === "heavy" || e.type === "boss" || e.type === "tank") {
       const bw = e.type === "boss" ? 240 : (e.type === "tank" ? 60 : 50);
@@ -3903,6 +4587,69 @@ function drawEffects() {
     ctx.beginPath(); ctx.arc(s.x, s.y, s.radius, 0, TAU); ctx.stroke();
     ctx.restore();
   }
+  for (const y of yoyoStates) {
+    ctx.save(); ctx.strokeStyle = "rgba(255,102,170,.5)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(y.x, y.y); ctx.stroke();
+    ctx.shadowBlur = 25; ctx.shadowColor = "#ff66aa"; ctx.fillStyle = "#ff66aa";
+    ctx.beginPath(); ctx.arc(y.x, y.y, y.r, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(y.x, y.y, y.r*0.4, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  for (const f of frisbeeStates) {
+    ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.spin);
+    ctx.shadowBlur = 25; ctx.shadowColor = "#66ffcc"; ctx.strokeStyle = "#66ffcc"; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(0, 0, f.r, 0, TAU); ctx.stroke();
+    ctx.lineWidth = 2; ctx.strokeStyle = "#ffffff"; ctx.beginPath(); ctx.arc(0, 0, f.r*0.6, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+  for (const c of chainStates) {
+    ctx.save(); ctx.strokeStyle = "#c0c0c0"; ctx.lineWidth = 3; ctx.shadowBlur = 15; ctx.shadowColor = "#c0c0c0";
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(c.tx, c.ty); ctx.stroke();
+    ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(c.tx, c.ty, 12, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  if (hammerWave > 0) {
+    ctx.save(); ctx.globalAlpha = hammerWave/20; ctx.strokeStyle = "#ffaa66"; ctx.lineWidth = 8; ctx.shadowBlur = 20; ctx.shadowColor = "#ffaa66";
+    ctx.beginPath(); ctx.arc(player.x, player.y, (130+level*2+pw("hammer")*20), 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+  if (batSwing > 0) {
+    ctx.save(); ctx.globalAlpha = batSwing/14; ctx.strokeStyle = "#e0c090"; ctx.lineWidth = 10; ctx.shadowBlur = 20; ctx.shadowColor = "#e0c090";
+    ctx.beginPath(); ctx.arc(player.x, player.y, 120+level*2+pw("bat")*15, -Math.PI/2 - Math.PI*0.4, -Math.PI/2 + Math.PI*0.4); ctx.stroke();
+    ctx.restore();
+  }
+  if (selectedWeapon === "hulaHoop" || activeWeapons.includes("hulaHoop")) {
+    const p = pw("hulaHoop"), r = 60+level*2+p*12;
+    ctx.save(); ctx.translate(player.x, player.y); ctx.rotate(hulaAngle);
+    ctx.shadowBlur = 25; ctx.shadowColor = "#ff88ff"; ctx.strokeStyle = "#ff88ff"; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.stroke();
+    for (let k = 0; k < 8; k++) { const a = k/8*TAU; ctx.fillStyle = k%2 ? "#ffffff" : "#ff88ff"; ctx.beginPath(); ctx.arc(Math.cos(a)*r, Math.sin(a)*r, 3, 0, TAU); ctx.fill(); }
+    ctx.restore();
+  }
+  for (const o of eraserOrbs) {
+    ctx.save(); ctx.globalAlpha = o.life/120; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.shadowBlur = 20; ctx.shadowColor = "#ffffff";
+    ctx.beginPath(); ctx.arc(player.x, player.y, o.r, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+  for (const b of bubbleHornPuffs) {
+    ctx.save(); ctx.globalAlpha = Math.min(1, b.life/40); ctx.strokeStyle = "rgba(170,221,255,.9)"; ctx.lineWidth = 2; ctx.shadowBlur = 15; ctx.shadowColor = "#aaddff";
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.stroke();
+    ctx.fillStyle = "rgba(170,221,255,.2)"; ctx.fill();
+    ctx.restore();
+  }
+  for (const w of karaokeWaves) {
+    ctx.save(); ctx.globalAlpha = w.life/45; ctx.strokeStyle = "#ff99cc"; ctx.lineWidth = 5; ctx.shadowBlur = 20; ctx.shadowColor = "#ff99cc";
+    ctx.beginPath(); ctx.moveTo(w.x, w.y); ctx.arc(w.x, w.y, w.range, w.angle-Math.PI/3, w.angle+Math.PI/3); ctx.closePath(); ctx.stroke();
+    ctx.restore();
+  }
+  for (const k of kendamaBalls) {
+    ctx.save(); ctx.strokeStyle = "rgba(200,160,106,.4)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(k.x, k.y); ctx.stroke();
+    ctx.shadowBlur = 20; ctx.shadowColor = "#c8a06a"; ctx.fillStyle = "#c8a06a";
+    ctx.beginPath(); ctx.arc(k.x, k.y, 10, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(k.x, k.y, 4, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
 }
 function drawPowerups() {
   for (const p of powerups) {
@@ -3936,13 +4683,38 @@ function drawSpecialEffect() {
   if (specialActive <= 0) return;
   const prog = 1 - specialActive/90;
   const a = 1 - prog;
+  const fx = saveData.equippedSpecialFx || "fx_special_default";
   ctx.save();
-  const gr = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W);
-  const hue = (Date.now()*0.3)%360;
-  gr.addColorStop(0, `hsla(${hue},100%,90%,${a*0.9})`);
-  gr.addColorStop(0.5, `hsla(${(hue+60)%360},100%,70%,${a*0.7})`);
-  gr.addColorStop(1, `hsla(${(hue+120)%360},100%,50%,${a*0.5})`);
-  ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+  if (fx === "fx_special_black") {
+    ctx.fillStyle = `rgba(0,0,0,${a*0.85})`; ctx.fillRect(0,0,W,H);
+  } else if (fx === "fx_special_rainbow") {
+    for (let k = 0; k < 8; k++) {
+      ctx.globalAlpha = a*0.6;
+      ctx.fillStyle = `hsl(${(Date.now()*0.2 + k*45)%360},100%,55%)`;
+      ctx.fillRect(0, H*k/8, W, H/8);
+    }
+  } else if (fx === "fx_special_shock") {
+    for (let k = 0; k < 3; k++) {
+      const rr = (prog*W) - k*40;
+      if (rr < 0) continue;
+      ctx.globalAlpha = a*0.7;
+      ctx.strokeStyle = "#00eeff"; ctx.lineWidth = 5; ctx.shadowBlur = 30; ctx.shadowColor = "#00eeff";
+      ctx.beginPath(); ctx.arc(W/2, H/2, rr, 0, TAU); ctx.stroke();
+    }
+  } else if (fx === "fx_special_gold") {
+    const gr = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W);
+    gr.addColorStop(0, `rgba(255,215,0,${a*0.9})`);
+    gr.addColorStop(0.5, `rgba(255,180,0,${a*0.7})`);
+    gr.addColorStop(1, `rgba(120,60,0,${a*0.5})`);
+    ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+  } else {
+    const gr = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W);
+    const hue = (Date.now()*0.3)%360;
+    gr.addColorStop(0, `hsla(${hue},100%,90%,${a*0.9})`);
+    gr.addColorStop(0.5, `hsla(${(hue+60)%360},100%,70%,${a*0.7})`);
+    gr.addColorStop(1, `hsla(${(hue+120)%360},100%,50%,${a*0.5})`);
+    ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+  }
   ctx.globalAlpha = a;
   ctx.textAlign = "center";
   ctx.shadowBlur = 40; ctx.shadowColor = specials[selectedSpecial].color;
@@ -4032,6 +4804,11 @@ function drawGameUI() {
   ctx.fillText(`BOSS: ${bossKillCount}/${bt}`, W-20, 90);
   if (studyMode) { ctx.fillStyle = "#66ccff"; ctx.font = "bold 11px Arial"; ctx.shadowBlur = 8; ctx.shadowColor = "#66ccff"; ctx.fillText("📚 STUDY", W-20, 110); ctx.fillStyle = "#ffffff"; ctx.font = "bold 11px Arial"; ctx.fillText(`正解: ${studyCorrectCount}`, W-20, 128); }
   else if (selectedChallenge) { ctx.fillStyle = CHALLENGES[selectedChallenge].color; ctx.font = "bold 11px Arial"; ctx.shadowBlur = 8; ctx.shadowColor = CHALLENGES[selectedChallenge].color; ctx.fillText(`🔥 ${CHALLENGES[selectedChallenge].name}`, W-20, 126); }
+  if (hardChallengeState.active) {
+    const hc = HARD_CHALLENGES.find(x => x.id === hardChallengeState.id);
+    ctx.fillStyle = hc.color; ctx.font = "bold 11px Arial"; ctx.shadowBlur = 8; ctx.shadowColor = hc.color;
+    ctx.fillText(`💀 ${hc.name}`, W-20, 144);
+  }
   ctx.shadowBlur = 0;
   ctx.textAlign = "left";
   if (combo > 1) {
@@ -4042,9 +4819,9 @@ function drawGameUI() {
     ctx.fillStyle = "#ffcc00"; ctx.shadowBlur = 30; ctx.shadowColor = "#ffcc00";
     const s = 32+Math.min(30, combo*0.4);
     ctx.font = `bold ${s}px Arial`;
-    ctx.fillText(`${combo} COMBO`, W-20, 145);
+    ctx.fillText(`${combo} COMBO`, W-20, 165);
     ctx.font = "bold 20px Arial"; ctx.fillStyle = "#fff";
-    ctx.fillText(`x${comboMultiplier().toFixed(1)}`, W-20, 173);
+    ctx.fillText(`x${comboMultiplier().toFixed(1)}`, W-20, 193);
     ctx.restore();
     ctx.textAlign = "left";
   }
@@ -4063,7 +4840,7 @@ function drawGameUI() {
   ctx.fillText("MOVE: TOUCH / WASD", 20, H-18);
 }
 function drawPauseButton() {
-  if (titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || pauseScreen || settingsScreen) return;
+  if (titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || hardChallengeScreen || pauseScreen || settingsScreen || emergencyMenu) return;
   ctx.save();
   ctx.shadowBlur = 15; ctx.shadowColor = "#00ffcc";
   ctx.fillStyle = "rgba(0,20,30,.7)"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 2;
@@ -4074,7 +4851,7 @@ function drawPauseButton() {
   ctx.restore();
 }
 function drawMuteButton() {
-  if (titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || pauseScreen || settingsScreen) return;
+  if (titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || hardChallengeScreen || pauseScreen || settingsScreen || emergencyMenu) return;
   ctx.save();
   ctx.shadowBlur = 15; ctx.shadowColor = seEnabled ? "#00ffcc" : "#666";
   ctx.fillStyle = "rgba(0,20,30,.7)"; ctx.strokeStyle = seEnabled ? "#00ffcc" : "#666"; ctx.lineWidth = 2;
@@ -4086,7 +4863,7 @@ function drawMuteButton() {
   ctx.restore();
 }
 function drawSpecialCircle() {
-  if (bossMode || titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || pauseScreen || settingsScreen) return;
+  if (bossMode || titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen || challengeScreen || studySelectScreen || hardChallengeScreen || pauseScreen || settingsScreen || emergencyMenu) return;
   const cx = SPECIAL_BTN_X, cy = SPECIAL_BTN_Y, r = SPECIAL_BTN_R;
   const ratio = studyMode ? (studyBurstGauge/STUDY_BURST_MAX) : (specialGauge/SPECIAL_MAX);
   const full = studyMode ? (studyBurstGauge >= STUDY_BURST_MAX) : (specialGauge >= SPECIAL_MAX);
@@ -4183,7 +4960,7 @@ function drawTitle() {
     ctx.fillStyle = "#ff4466"; ctx.font = "bold 16px Arial";
     ctx.fillText("BOSS BATTLE", W/2, y+17);
     ctx.fillStyle = "rgba(255,255,255,.8)"; ctx.font = "10px Arial";
-    ctx.fillText("武器3つ・必殺なし・3形態の弾幕ボス", W/2, y+31);
+    ctx.fillText("HP5固定・回復はバンパイアのみ・避け重視", W/2, y+31);
   }
   const gbtn = (x, y, w, h, color, label, sub, badge) => {
     ctx.shadowBlur = 25; ctx.shadowColor = color; ctx.strokeStyle = color; ctx.lineWidth = 3;
@@ -4197,24 +4974,11 @@ function drawTitle() {
   gbtn(TITLE_GRID_X1, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H, "#ffd700", `🛒 SHOP`, `🪙${saveData.coins}`);
   const mb = dailyMissions.some(m => !m.claimed && isMissionComplete(m));
   gbtn(TITLE_GRID_X2, TITLE_GRID_Y, TITLE_GRID_W, TITLE_GRID_H, "#88ff88", `📅 ミッション`, `毎日更新`, mb);
-  const cc = CHALLENGE_ORDER.filter(k => saveData.challengeRecords[k] && saveData.challengeRecords[k].cleared).length;
-  gbtn(TITLE_GRID_X1, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H, "#ff6600", `🔥 縛り`, `${cc}/${CHALLENGE_ORDER.length}`, false);
+  const hc = getTodayHardChallenge();
+  const hcDone = saveData.hardChallengeDone;
+  gbtn(TITLE_GRID_X1, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H, "#ff0044", `💀 高難度`, hcDone ? "本日達成!" : "5000コイン", !hcDone);
   const gl = saveData.studyGrade === 1 ? "中1" : saveData.studyGrade === 2 ? "中2" : "中3";
   gbtn(TITLE_GRID_X2, TITLE_GRID_Y2, TITLE_GRID_W, TITLE_GRID_H, "#66ccff", `📚 スタディ`, `現在: ${gl}`, false);
-  {
-    const y = TITLE_GACHA_Y, bw = TITLE_GACHA_W, bh = TITLE_GACHA_H, x = (W-bw)/2;
-    const hue = (Date.now()*0.3)%360;
-    const canAfford = saveData.coins >= 300;
-    const col = canAfford ? `hsl(${hue},100%,60%)` : "#666";
-    ctx.shadowBlur = canAfford ? 30 : 8; ctx.shadowColor = col;
-    ctx.strokeStyle = col; ctx.lineWidth = 3;
-    ctx.strokeRect(x, y, bw, bh);
-    ctx.fillStyle = canAfford ? `hsla(${hue},100%,60%,.2)` : "rgba(80,80,80,.3)";
-    ctx.fillRect(x, y, bw, bh);
-    ctx.fillStyle = canAfford ? `hsl(${hue},100%,75%)` : "#999";
-    ctx.font = "bold 15px Arial";
-    ctx.fillText(canAfford ? "🎰 ガチャ (🪙300)" : "🎰 ガチャ (コイン不足)", W/2, y+26);
-  }
   {
     const cx = TITLE_SETTINGS_BTN_X, cy = TITLE_SETTINGS_BTN_Y, r = TITLE_SETTINGS_BTN_R;
     ctx.save();
@@ -4230,7 +4994,7 @@ function drawTitle() {
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#aaa"; ctx.font = "10px Arial";
   ctx.textAlign = "center";
-  ctx.fillText("(S:ショップ / M:ミッション / C:縛り / T:スタディ / G:ガチャ / ESC:ポーズ)", W/2, 655);
+  ctx.fillText("(S:ショップ / M:ミッション / C:高難度 / T:スタディ / G:ガチャ / ESC:ポーズ)", W/2, 655);
   ctx.fillStyle = "#ffcc00"; ctx.font = "10px Arial";
   ctx.fillText(`ボスを ${BOSS_KILL_TARGET} 回倒すとゲームクリア！`, W/2, 672);
   ctx.textAlign = "left";
@@ -4266,6 +5030,73 @@ function drawDailyBonusPopup() {
   ctx.restore();
   ctx.textAlign = "left";
 }
+function drawHardChallengeScreen() {
+  if (!hardChallengeScreen) return;
+  const c = getTodayHardChallenge();
+  const today = todayStr();
+  const bought = saveData.hardChallengeBoughtDate === today;
+  const done = saveData.hardChallengeDone;
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,10,.96)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.shadowBlur = 30; ctx.shadowColor = "#ff0044";
+  ctx.fillStyle = "#ff4466"; ctx.font = "bold 28px Arial";
+  ctx.fillText("💀 高難度チャレンジ", W/2, 70);
+  ctx.shadowBlur = 10; ctx.fillStyle = "#fff"; ctx.font = "bold 14px Arial";
+  ctx.fillText("5000コインで解放・1日1回・失敗で払い損", W/2, 100);
+  ctx.fillStyle = "#ffd700"; ctx.font = "bold 16px Arial";
+  ctx.fillText(`所持: 🪙 ${saveData.coins}`, W/2, 130);
+  const bw = 360, bh = 120, bx = (W-bw)/2, by = 160;
+  ctx.shadowBlur = 25; ctx.shadowColor = c.color; ctx.strokeStyle = c.color; ctx.lineWidth = 4;
+  ctx.strokeRect(bx, by, bw, bh);
+  ctx.fillStyle = c.color + "22"; ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = c.color; ctx.font = "bold 22px Arial";
+  ctx.fillText("本日のお題", W/2, by+28);
+  ctx.shadowBlur = 20; ctx.fillStyle = "#fff"; ctx.font = "bold 20px Arial";
+  ctx.fillText(c.name, W/2, by+62);
+  ctx.shadowBlur = 10; ctx.fillStyle = "rgba(255,255,255,.8)"; ctx.font = "bold 13px Arial";
+  ctx.fillText(c.desc, W/2, by+88);
+  ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
+  ctx.fillText("報酬: 🪙 10000", W/2, by+110);
+  const buyY = 320, startY = 320;
+  if (done) {
+    ctx.shadowBlur = 25; ctx.shadowColor = "#00ff66"; ctx.fillStyle = "#00ff66"; ctx.font = "bold 26px Arial";
+    ctx.fillText("✓ 本日はクリア済み！", W/2, buyY+40);
+  } else if (!hardChallengeArmed) {
+    const canBuy = saveData.coins >= 5000 && !bought;
+    const bw2 = 300, bh2 = 60, bx2 = (W-bw2)/2;
+    const col = canBuy ? "#ffd700" : "#666";
+    ctx.shadowBlur = canBuy ? 25 : 8; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = 3;
+    ctx.strokeRect(bx2, buyY, bw2, bh2);
+    ctx.fillStyle = canBuy ? "rgba(255,215,0,.15)" : "rgba(80,80,80,.3)";
+    ctx.fillRect(bx2, buyY, bw2, bh2);
+    ctx.fillStyle = canBuy ? "#ffd700" : "#888"; ctx.font = "bold 20px Arial";
+    ctx.fillText(bought ? "本日は購入済み" : "🪙 5000 で解放", W/2, buyY+40);
+  } else {
+    const bw2 = 300, bh2 = 60, bx2 = (W-bw2)/2;
+    const pulse = 0.5 + Math.sin(Date.now()*0.01)*0.5;
+    ctx.shadowBlur = 30; ctx.shadowColor = "#ff0044"; ctx.strokeStyle = "#ff0044"; ctx.lineWidth = 4;
+    ctx.strokeRect(bx2, startY, bw2, bh2);
+    ctx.fillStyle = `rgba(255,0,68,${0.2+pulse*0.2})`;
+    ctx.fillRect(bx2, startY, bw2, bh2);
+    ctx.fillStyle = "#ff4466"; ctx.font = "bold 24px Arial";
+    ctx.fillText("▶ 挑戦する", W/2, startY+40);
+  }
+  if (hardMsg) {
+    ctx.fillStyle = "#ff6666"; ctx.font = "bold 14px Arial"; ctx.shadowBlur = 10; ctx.shadowColor = "#ff6666";
+    ctx.fillText(hardMsg, W/2, H-130);
+  }
+  ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "11px Arial"; ctx.shadowBlur = 0;
+  ctx.fillText("※ 武器/必殺は直前に選んだものを使います", W/2, H-105);
+  const bby = H-45, bbw = 200, bbx = (W-bbw)/2;
+  ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
+  ctx.strokeRect(bbx, bby-22, bbw, 44);
+  ctx.fillStyle = "rgba(0,255,204,.15)"; ctx.fillRect(bbx, bby-22, bbw, 44);
+  ctx.fillStyle = "#00ffcc"; ctx.font = "bold 18px Arial";
+  ctx.fillText("◀ 戻る", W/2, bby+7);
+  ctx.restore();
+  ctx.textAlign = "left";
+}
 function drawShop() {
   ctx.fillStyle = "rgba(0,0,8,.95)"; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
@@ -4276,10 +5107,11 @@ function drawShop() {
   ctx.shadowBlur = 12; ctx.shadowColor = "#ffd700";
   ctx.fillText(`🪙 ${saveData.coins} コイン`, W/2, 54);
   const tabs = [
-    { x: SHOP_TAB_WEAPON_X, key: "weapon", label: "⚔️ 武器", color: "#00ffcc" },
-    { x: SHOP_TAB_SPECIAL_X, key: "special", label: "⚡ 必殺", color: "#ffcc00" },
-    { x: SHOP_TAB_UPGRADE_X, key: "upgrade", label: "💪 強化", color: "#88ff88" },
-    { x: SHOP_TAB_COSMETIC_X, key: "cosmetic", label: "🎨 見た目", color: "#ff88cc" }
+    { x: SHOP_TAB_WEAPON_X, key: "weapon", label: "⚔️武器", color: "#00ffcc" },
+    { x: SHOP_TAB_SPECIAL_X, key: "special", label: "⚡必殺", color: "#ffcc00" },
+    { x: SHOP_TAB_UPGRADE_X, key: "upgrade", label: "💪強化", color: "#88ff88" },
+    { x: SHOP_TAB_COSMETIC_X, key: "cosmetic", label: "🎨色", color: "#ff88cc" },
+    { x: SHOP_TAB_FX_X, key: "fx", label: "✨FX", color: "#ffaa44" }
   ];
   for (const t of tabs) {
     const act = shopTab === t.key;
@@ -4289,15 +5121,34 @@ function drawShop() {
     ctx.strokeRect(t.x, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H);
     if (act) { ctx.fillStyle = t.color + "26"; ctx.fillRect(t.x, SHOP_TAB_Y, SHOP_TAB_W, SHOP_TAB_H); }
     ctx.fillStyle = act ? t.color : t.color + "88";
-    ctx.font = "bold 13px Arial";
-    ctx.fillText(t.label, t.x+SHOP_TAB_W/2, SHOP_TAB_Y+23);
+    ctx.font = "bold 11px Arial";
+    ctx.fillText(t.label, t.x+SHOP_TAB_W/2, SHOP_TAB_Y+22);
   }
-  if (shopMessage) { ctx.fillStyle = shopMessage.color; ctx.font = "bold 12px Arial"; ctx.shadowBlur = 15; ctx.shadowColor = shopMessage.color; ctx.fillText(shopMessage.text, W/2, SHOP_TAB_Y+SHOP_TAB_H+16); }
+  /* FXサブタブ */
+  if (shopTab === "fx") {
+    const kinds = ["kill","trail","aura","special"];
+    const labels = ["撃破","弾","オーラ","必殺"];
+    const sw = (MENU_WIDTH - 6*3)/4, sx0 = MENU_MARGIN, sy = SHOP_TAB_Y + SHOP_TAB_H + 6;
+    for (let i = 0; i < 4; i++) {
+      const act = shopFxKind === kinds[i];
+      ctx.shadowBlur = act ? 15 : 5; ctx.shadowColor = "#ffaa44";
+      ctx.strokeStyle = act ? "#ffaa44" : "#ffaa4466"; ctx.lineWidth = act ? 2 : 1;
+      ctx.strokeRect(sx0 + i*(sw+6), sy, sw, 26);
+      if (act) { ctx.fillStyle = "rgba(255,170,68,.2)"; ctx.fillRect(sx0 + i*(sw+6), sy, sw, 26); }
+      ctx.fillStyle = act ? "#ffaa44" : "#ffaa4488"; ctx.font = "bold 11px Arial";
+      ctx.fillText(labels[i], sx0 + i*(sw+6) + sw/2, sy+17);
+    }
+  }
+  if (shopMessage) { ctx.fillStyle = shopMessage.color; ctx.font = "bold 12px Arial"; ctx.shadowBlur = 15; ctx.shadowColor = shopMessage.color; ctx.fillText(shopMessage.text, W/2, SHOP_TAB_Y+SHOP_TAB_H+(shopTab === "fx" ? 40 : 16)); }
   ctx.save();
-  const ly = SHOP_TAB_Y + SHOP_TAB_H + 20;
+  const ly = SHOP_TAB_Y + SHOP_TAB_H + (shopTab === "fx" ? 40 : 20);
   ctx.beginPath(); ctx.rect(0, ly, W, H-ly-70); ctx.clip();
-  const list = shopTab === "weapon" ? getShopWeapons() : shopTab === "special" ? getShopSpecials() : shopTab === "upgrade" ? UPGRADE_ORDER : getShopCosmetics();
-  const data = shopTab === "weapon" ? weapons : shopTab === "special" ? specials : shopTab === "upgrade" ? UPGRADES : cosmetics;
+  let list, data;
+  if (shopTab === "weapon") { list = getShopWeapons(); data = weapons; }
+  else if (shopTab === "special") { list = getShopSpecials(); data = specials; }
+  else if (shopTab === "upgrade") { list = UPGRADE_ORDER; data = UPGRADES; }
+  else if (shopTab === "cosmetic") { list = getShopCosmetics(); data = cosmetics; }
+  else { list = FX_ORDER.filter(k => FX_ITEMS[k].kind === shopFxKind && !isFreeFx(k)); data = FX_ITEMS; }
   for (let i = 0; i < list.length; i++) {
     const k = list[i];
     const w = data[k];
@@ -4310,6 +5161,12 @@ function drawShop() {
       price = mx ? 0 : getUpgradePrice(k);
       can = saveData.coins >= price;
       eq = false;
+    } else if (shopTab === "fx") {
+      owned = ownsFx(k);
+      price = getFxPrice(k);
+      can = saveData.coins >= price;
+      eq = (shopFxKind === "kill" && saveData.equippedKillFx === k) || (shopFxKind === "trail" && saveData.equippedTrailFx === k) || (shopFxKind === "aura" && saveData.equippedAuraFx === k) || (shopFxKind === "special" && saveData.equippedSpecialFx === k);
+      mx = false;
     } else {
       owned = shopTab === "weapon" ? ownsWeapon(k) : shopTab === "special" ? ownsSpecial(k) : ownsCosmetic(k);
       price = shopTab === "weapon" ? getWeaponPrice(k) : shopTab === "special" ? getSpecialPrice(k) : getCosmeticPrice(k);
@@ -4332,10 +5189,11 @@ function drawShop() {
     ctx.textAlign = "left";
     ctx.fillStyle = (owned && shopTab !== "upgrade") ? "#88ff88" : "#fff";
     if (shopTab === "upgrade" && owned) ctx.fillStyle = "#88ff88";
+    if (shopTab === "fx" && owned) ctx.fillStyle = "#88ff88";
     ctx.font = "bold 14px Arial";
     ctx.fillText(w.name, MENU_MARGIN+16, y+24);
     ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "11px Arial";
-    ctx.fillText(w.description, MENU_MARGIN+16, y+46);
+    ctx.fillText(w.description || w.desc || "", MENU_MARGIN+16, y+46);
     if (shopTab === "upgrade") {
       ctx.fillStyle = w.color; ctx.font = "bold 11px Arial";
       ctx.fillText(w.consume ? `所持 ${getUpgradeLevel(k)} / ${w.maxLevel}` : w.fixed ? `プレイ ${getUpgradeLevel(k)}回` : `Lv ${getUpgradeLevel(k)} / ${w.maxLevel}`, MENU_MARGIN+16, y+62);
@@ -4344,7 +5202,7 @@ function drawShop() {
     if (shopTab === "upgrade") {
       if (mx) { ctx.fillStyle = "#ffd700"; ctx.font = "bold 15px Arial"; ctx.shadowBlur = 15; ctx.shadowColor = "#ffd700"; ctx.fillText("★ MAX", MENU_MARGIN+MENU_WIDTH-12, y+40); }
       else { ctx.fillStyle = can ? "#ffd700" : "#888"; ctx.font = "bold 15px Arial"; ctx.shadowBlur = can ? 12 : 0; ctx.shadowColor = "#ffd700"; ctx.fillText(`🪙 ${price}`, MENU_MARGIN+MENU_WIDTH-12, y+40); }
-    } else if (shopTab === "cosmetic" && owned) {
+    } else if ((shopTab === "cosmetic" || shopTab === "fx") && owned) {
       ctx.fillStyle = eq ? "#ffd700" : "#88ff88"; ctx.font = "bold 14px Arial"; ctx.shadowBlur = 15; ctx.shadowColor = ctx.fillStyle;
       ctx.fillText(eq ? "★ 装備中" : "装備する▶", MENU_MARGIN+MENU_WIDTH-12, y+40);
     } else if (owned) {
@@ -4725,13 +5583,22 @@ function drawPauseScreen() {
     ctx.textAlign = "center";
     ctx.shadowBlur = 30; ctx.shadowColor = "#00ffcc";
     ctx.fillStyle = "#00ffcc"; ctx.font = "bold 40px Arial";
-    ctx.fillText("⏸ PAUSE", W/2, H/2-140);
+    ctx.fillText("⏸ PAUSE", W/2, H/2-160);
     const bw = 240, bh = 60, bx = (W-bw)/2, ry = H/2-80, qy = H/2+10;
     ctx.shadowBlur = 25; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
     ctx.strokeRect(bx, ry, bw, bh);
     ctx.fillStyle = "rgba(0,255,204,.15)"; ctx.fillRect(bx, ry, bw, bh);
     ctx.fillStyle = "#00ffcc"; ctx.font = "bold 22px Arial";
     ctx.fillText("▶ 再開", W/2, ry+40);
+    /* 緊急購入ボタン */
+    const ex = (W-240)/2, ey = H/2+90, ew = 240, eh = 50;
+    const col = saveData.emergencyUsed ? "#666" : "#ffd700";
+    ctx.shadowBlur = saveData.emergencyUsed ? 5 : 25; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = 3;
+    ctx.strokeRect(ex, ey, ew, eh);
+    ctx.fillStyle = saveData.emergencyUsed ? "rgba(80,80,80,.3)" : "rgba(255,215,0,.15)";
+    ctx.fillRect(ex, ey, ew, eh);
+    ctx.fillStyle = col; ctx.font = "bold 18px Arial";
+    ctx.fillText(saveData.emergencyUsed ? "🆘 緊急購入(使用済)" : "🆘 緊急購入 (1回)", W/2, ey+32);
     ctx.shadowBlur = 25; ctx.shadowColor = "#ffcc00"; ctx.strokeStyle = "#ffcc00"; ctx.lineWidth = 3;
     ctx.strokeRect(bx, qy, bw, bh);
     ctx.fillStyle = "rgba(255,204,0,.15)"; ctx.fillRect(bx, qy, bw, bh);
@@ -4777,6 +5644,7 @@ function drawGameOver() {
     ctx.font = "bold 20px Arial";
     let sub = "WEAPON CLEAR";
     if (studyMode) sub = "📚 STUDY CLEAR 📚";
+    else if (hardChallengeState.active) sub = "💀 HARD CLEAR 💀";
     else if (selectedChallenge) sub = "🔥 CHALLENGE CLEAR 🔥";
     else if (fusionMode && activeWeapons.length > 1) sub = "⚡ FUSION CLEAR ⚡";
     ctx.fillText(bossMode ? "BOSS BATTLE CLEAR" : sub, W/2, y);
@@ -4838,6 +5706,12 @@ function drawGameOver() {
       ctx.fillText(`正解数: ${studyCorrectCount} 問`, W/2, y);
       y += 30;
     }
+    if (hardChallengeState.active) {
+      ctx.shadowBlur = 12; ctx.shadowColor = "#ff0044"; ctx.fillStyle = "#ff0044";
+      ctx.font = "bold 16px Arial";
+      ctx.fillText("💀 高難度失敗… 5000コインは返ってこない", W/2, y);
+      y += 30;
+    }
     ctx.shadowBlur = 12; ctx.shadowColor = "#fff"; ctx.fillStyle = "#fff";
     ctx.font = "bold 24px Arial";
     ctx.fillText(`SCORE : ${score}`, W/2, y);
@@ -4891,6 +5765,7 @@ function draw() {
   if (missionScreen) { drawMissionScreen(); return; }
   if (challengeScreen) { drawChallengeScreen(); return; }
   if (studySelectScreen) { drawStudySelectScreen(); return; }
+  if (hardChallengeScreen) { drawHardChallengeScreen(); return; }
   ctx.save();
   ctx.translate(W/2, H/2);
   ctx.scale(zoomPulse, zoomPulse);
@@ -4933,6 +5808,7 @@ function draw() {
   drawSpecialCircle();
   if (studyQuizActive) drawStudyQuiz();
   if (pauseScreen) drawPauseScreen();
+  if (emergencyMenu) drawEmergencyMenu();
   if (flashScreen > 0 && FX.flashMultiplier > 0) {
     ctx.save();
     ctx.globalAlpha = Math.min(1, flashScreen/10)*0.7*FX.flashMultiplier;
@@ -5028,7 +5904,7 @@ const WP=[
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const inR=(p,x,y,w,h)=>p.x>=x&&p.x<=x+w&&p.y>=y&&p.y<=y+h;
 const send=o=>{try{if(S.conn&&S.conn.open)S.conn.send(o)}catch(e){}};
-const titleOk=()=>titleScreen&&!showDailyBonusPopup&&!abortPopup&&!settingsScreen&&!S.on;
+const titleOk=()=>titleScreen&&!showDailyBonusPopup&&!abortPopup&&!settingsScreen&&!S.on&&!hardChallengeScreen&&!emergencyMenu;
 function clr(){for(const a of[particles,damageNumbers,shockwaves,powerups])a.length=0;screenShake=flashScreen=chromaOffset=0;zoomPulse=1;shakeX=shakeY=0}
 function cleanup(){clr();try{S.conn&&S.conn.close()}catch(e){}try{S.peer&&S.peer.destroy()}catch(e){}S.conn=S.peer=null;S.rm=S.orm=S.gone=false;S.wins=S.loses=0}
 function back(m){cleanup();S.scr="menu";S.msg=m||""}
@@ -5202,7 +6078,7 @@ window.addEventListener("keyup",e=>{S.k[e.key.toLowerCase()]=false},true);
    ========================================================= */
 let gp = null, shown = 0, coverOld = false;
 const GB = { x: 40, y: 44, r: 24 };
-const KIND = { weapon: "武器", special: "必殺技", cosmetic: "見た目" };
+const KIND = { weapon: "武器", special: "必殺技", cosmetic: "見た目", fx: "エフェクト" };
 
 window.rollGacha = function () {
   const now = Date.now();
@@ -5214,16 +6090,18 @@ window.rollGacha = function () {
   for (const k of WEAPON_ORDER) if (!ownsWeapon(k)) all.push({ kind: "weapon", key: k });
   for (const k of SPECIAL_ORDER) if (!ownsSpecial(k) && k !== "knowledgeburst") all.push({ kind: "special", key: k });
   for (const k of COSMETIC_ORDER) if (!ownsCosmetic(k)) all.push({ kind: "cosmetic", key: k });
+  for (const k of FX_ORDER) if (!ownsFx(k) && !isFreeFx(k)) all.push({ kind: "fx", key: k });
   if (!all.length) { gp = { fail: true, text: "すべて解放済み！", sub: "", until: now + 2200 }; return; }
   saveData.coins -= 300;
   const pick = all[Math.floor(Math.random() * all.length)];
   let data;
   if (pick.kind === "weapon") { saveData.ownedWeapons.push(pick.key); data = weapons; }
   else if (pick.kind === "special") { saveData.ownedSpecials.push(pick.key); data = specials; }
-  else { saveData.ownedCosmetics.push(pick.key); data = cosmetics; }
+  else if (pick.kind === "cosmetic") { saveData.ownedCosmetics.push(pick.key); data = cosmetics; }
+  else { saveData.ownedFx.push(pick.key); data = FX_ITEMS; }
   writeSave();
   const d = data[pick.key];
-  gp = { kind: pick.kind, name: d.name, desc: d.description, color: d.color, until: now + 4000 };
+  gp = { kind: pick.kind, name: d.name, desc: d.description || d.desc, color: d.color, until: now + 4000 };
   sfx.coin(); sfx.clear();
 };
 
@@ -5274,13 +6152,11 @@ function drawGachaPopup() {
     ctx.shadowBlur = 0; ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
     ctx.fillText(gp.desc, W / 2, by + 168);
     ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.font = "12px Arial";
-    ctx.fillText(gp.kind === "cosmetic" ? "ショップの「見た目」で装備できます" : "選択画面で使えるようになりました", W / 2, by + 198);
+    ctx.fillText("ショップで装備できます", W / 2, by + 198);
     ctx.fillText("タップで閉じる", W / 2, by + 220);
   }
   ctx.restore();
 }
-
-/* 旧ガチャボタン(タイトル下部)の描画を消す。失敗したら黒い板で隠す */
 let _dt = window.drawTitle;
 try {
   const src = _dt.toString();
@@ -5306,23 +6182,17 @@ function gDown(e) {
 }
 for (const ev of ["touchstart", "mousedown"]) window.addEventListener(ev, gDown, { capture: true, passive: false });
 
-/* =========================================================
-   2. ゲームクリア後にタップ/Enterでサイト再読込
-   ========================================================= */
 const _rt = window.returnToTitle;
 window.returnToTitle = function () {
   if (gameClear && gameOver) {
     writeSave();
-    setTimeout(_rt, 800); /* 再読込がブロックされた環境用の保険 */
+    setTimeout(_rt, 800);
     try { location.reload(); } catch (e) { _rt(); }
     return;
   }
   _rt();
 };
 
-/* =========================================================
-   3. ブラックホール強化: 吸い込むほどダメージUP + 吸引範囲拡大
-   ========================================================= */
 window.fireBlackHole = function () {
   const p = pw("blackhole");
   addBullet({ vx: 0, vy: -4, type: "blackhole", size: 20, damage: .7 + level * .15 + p * .4,
@@ -5355,272 +6225,6 @@ window.updateBlackHole = function (b) {
   }
   b.bonus = Math.min(8, b.bonus + n * .004);
 };
-
-/* HP0なのに残る敵(ブラックホール/重力/竜巻のダメージ)を毎フレーム回収 + 泡の継続ダメージ */
-const _ue = window.updateEnemies;
-window.updateEnemies = function () {
-  _ue();
-  if (time % 12 === 0 && activeWeapons.includes("bubble")) {
-    for (let i = enemies.length - 1; i >= 0; i--) {
-      const e = enemies[i];
-      if (e.floatTime > 0) { const d = 5 + pw("bubble")*2; e.hp -= d; showDamage(e.x, e.y, d, "#aaddff"); }
-    }
-  }
-  for (let i = enemies.length - 1; i >= 0; i--) if (enemies[i].hp <= 0) killEnemy(i);
-};
-
-/* =========================================================
-   4. 弱い武器の強化 (ダメージ倍率 / 連射間隔)
-   ========================================================= */
-function buffBullets(fn, mult, extra) {
-  const o = window[fn];
-  window[fn] = function () {
-    const n = bullets.length;
-    o.apply(this, arguments);
-    for (let i = n; i < bullets.length; i++) { bullets[i].damage *= mult; if (extra) extra(bullets[i]); }
-  };
-}
-buffBullets("fireFreeze", 2);
-buffBullets("fireIceShard", 1.8);
-buffBullets("firePoison", 2, b => { b.poisonDPS *= 2.2; });
-buffBullets("fireVampire", 1.7);
-buffBullets("firePiano", 1.5);
-buffBullets("fireSpike", 1.7);
-buffBullets("fireMissile", 1.4);
-buffBullets("fireSonic", 1.5);
-buffBullets("fireSnake", 1.5, b => { b.poisonDPS *= 1.8; });
-buffBullets("fireUmbrella", 1.4);
-{
-  const oc = window.fireCactus;
-  window.fireCactus = function () { const n = mines.length; oc(); for (let i = n; i < mines.length; i++) mines[i].damage *= 1.7; };
-  const ot = window.deployTurret;
-  window.deployTurret = function () { ot(); const t = turrets[turrets.length - 1]; if (t) t.damage *= 1.6; };
-  const od = window.fireDrone;
-  window.fireDrone = function () { od(); const t = turrets[turrets.length - 1]; if (t) t.damage *= 1.6; };
-  const CDM = { freeze: .75, spike: .75, missile: .8, thunder: .7, sonic: .85, snake: .85, piano: .85, bubble: .8 };
-  const ofw = window.fireWeapon;
-  window.fireWeapon = function (k) {
-    const before = weaponCools[k] || 0;
-    ofw(k);
-    if (CDM[k] && before <= 0 && weaponCools[k] > 0) weaponCools[k] = Math.max(1, Math.round(weaponCools[k] * CDM[k]));
-  };
-  const ol = window.updateLightning;
-  window.updateLightning = function () {
-    ol();
-    const iv = Math.max(15, 60 - level * 3 - pw("lightning") * 5), h = iv >> 1;
-    if (time % iv === h) { const t = time; time = t - h; ol(); time = t; }
-  };
-}
-
-/* =========================================================
-   5. 武器ビジュアル強化
-   ========================================================= */
-function glow(c, n) { ctx.shadowColor = c; ctx.shadowBlur = n; }
-function beam(b, len, color, w) {
-  const ang = Math.atan2(b.vy, b.vx), tx = b.x - Math.cos(ang) * len, ty = b.y - Math.sin(ang) * len;
-  ctx.save(); ctx.lineCap = "round";
-  const g = ctx.createLinearGradient(b.x, b.y, tx, ty);
-  g.addColorStop(0, "#ffffff"); g.addColorStop(.3, color); g.addColorStop(1, "rgba(0,0,0,0)");
-  glow(color, 30); ctx.strokeStyle = g; ctx.lineWidth = w;
-  ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(tx, ty); ctx.stroke();
-  ctx.shadowBlur = 0; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = Math.max(2, w * .35);
-  ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x - (b.x - tx) * .6, b.y - (b.y - ty) * .6); ctx.stroke();
-  ctx.restore();
-}
-function arrow(b, s, shaft, head) {
-  ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(Math.atan2(b.vy, b.vx) + Math.PI / 2);
-  glow(head, 12);
-  ctx.strokeStyle = shaft; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(0, s * 2.4); ctx.lineTo(0, -s * 1.4); ctx.stroke();
-  ctx.fillStyle = head; ctx.beginPath(); ctx.moveTo(0, -s * 2.6); ctx.lineTo(s * .7, -s * 1.3); ctx.lineTo(-s * .7, -s * 1.3); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5;
-  for (const sg of [-1, 1]) { ctx.beginPath(); ctx.moveTo(0, s * 2.4); ctx.lineTo(sg * s * .7, s * 3.1); ctx.moveTo(0, s * 1.8); ctx.lineTo(sg * s * .7, s * 2.5); ctx.stroke(); }
-  ctx.restore();
-}
-function drawWeaponBullet(b) {
-  const t = b.type, s = b.size || 4, ang = Math.atan2(b.vy || 0, b.vx || 0);
-  switch (t) {
-  case "knife": {
-    const a = b.angle !== undefined ? b.angle : ang, L = s * 2.6, w = s * .55;
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(a); glow("#ff5566", 18);
-    const g = ctx.createLinearGradient(-L * .3, 0, L, 0); g.addColorStop(0, "#8f9ab0"); g.addColorStop(1, "#ffffff");
-    ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(L, 0); ctx.quadraticCurveTo(L * .5, -w * 1.2, -L * .2, -w * .7);
-    ctx.lineTo(-L * .2, w * .7); ctx.quadraticCurveTo(L * .5, w * .5, L, 0); ctx.fill();
-    ctx.shadowBlur = 0; ctx.strokeStyle = "rgba(100,110,130,.8)"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(-L * .1, 0); ctx.lineTo(L * .8, 0); ctx.stroke();
-    ctx.fillStyle = "#ff5566"; ctx.fillRect(-L * .28, -w * 1.5, w * .6, w * 3);
-    ctx.fillStyle = "#552233"; ctx.fillRect(-L * .78, -w * .45, L * .5, w * .9);
-    ctx.restore(); return true; }
-  case "blackhole": {
-    const act = !(b.travel > 0), bon = b.bonus || 0;
-    const R = act ? (b.coreRadius || 20) * (1 + bon * .06) : s * .7;
-    ctx.save(); ctx.translate(b.x, b.y);
-    if (act) {
-      ctx.globalAlpha = .2 + .08 * Math.sin(time * .1); ctx.strokeStyle = "#9b59ff"; ctx.lineWidth = 2;
-      ctx.setLineDash([6, 8]); ctx.lineDashOffset = -time;
-      ctx.beginPath(); ctx.arc(0, 0, b.pullRadius, 0, TAU); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
-    }
-    const gg = ctx.createRadialGradient(0, 0, R * .8, 0, 0, R * 3.2);
-    gg.addColorStop(0, "rgba(155,89,255,.55)"); gg.addColorStop(1, "rgba(155,89,255,0)");
-    ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(0, 0, R * 3.2, 0, TAU); ctx.fill();
-    ctx.rotate(time * .12); ctx.lineWidth = 3;
-    for (let k = 0; k < 3; k++) {
-      ctx.strokeStyle = k % 2 ? "#ff9bff" : "#66ccff"; ctx.globalAlpha = .8; ctx.beginPath();
-      for (let j = 0; j <= 30; j++) { const rr = R * (1 + j / 30 * 1.8), aa = j / 30 * 3 + k * TAU / 3; ctx.lineTo(Math.cos(aa) * rr, Math.sin(aa) * rr * .9); }
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1; glow("#ffaa33", 20); ctx.strokeStyle = "#ffcc66"; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.ellipse(0, 0, R * 1.5, R * .55, 0, 0, TAU); ctx.stroke(); ctx.shadowBlur = 0;
-    ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
-    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.restore();
-    if (act && bon > .2) {
-      ctx.save(); ctx.textAlign = "center"; ctx.font = "bold 14px Arial"; ctx.fillStyle = "#ffcc66"; glow("#ff9900", 10);
-      ctx.fillText("x" + (1 + bon).toFixed(1), b.x, b.y - R * 2 - 8); ctx.restore();
-    }
-    return true; }
-  case "boomerang": {
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.spin || 0); ctx.lineCap = "round";
-    glow("#7cff6b", 18); ctx.strokeStyle = "#3fbf3f"; ctx.lineWidth = s * .6;
-    ctx.beginPath(); ctx.arc(0, 0, s, Math.PI * .9, Math.PI * 1.65); ctx.stroke();
-    ctx.shadowBlur = 0; ctx.strokeStyle = "#ccffcc"; ctx.lineWidth = s * .2;
-    ctx.beginPath(); ctx.arc(0, 0, s, Math.PI * .9, Math.PI * 1.65); ctx.stroke();
-    ctx.restore(); return true; }
-  case "missile": {
-    ctx.save(); ctx.translate(b.x, b.y);
-    if (b.hue === 45) { /* 蜂 */
-      ctx.rotate(ang + Math.PI / 2); glow("#ffcc00", 12);
-      ctx.fillStyle = "rgba(255,255,255,.6)";
-      for (const sg of [-1, 1]) { ctx.beginPath(); ctx.ellipse(sg * s * .9, -s * .2, s * .8, s * .4, sg * .5, 0, TAU); ctx.fill(); }
-      ctx.fillStyle = "#ffcc00"; ctx.beginPath(); ctx.ellipse(0, 0, s * .75, s * 1.1, 0, 0, TAU); ctx.fill();
-      ctx.shadowBlur = 0; ctx.fillStyle = "#221100"; ctx.fillRect(-s * .7, -s * .15, s * 1.4, s * .3); ctx.fillRect(-s * .6, s * .4, s * 1.2, s * .3);
-    } else { /* ミサイル */
-      ctx.rotate(ang + Math.PI / 2); glow("#ffaa22", 15);
-      const fl = s * (1.2 + Math.random() * .8), fg = ctx.createLinearGradient(0, s * .8, 0, s * .8 + fl);
-      fg.addColorStop(0, "#ffffff"); fg.addColorStop(.4, "#ffaa22"); fg.addColorStop(1, "rgba(255,60,0,0)");
-      ctx.fillStyle = fg; ctx.beginPath(); ctx.moveTo(-s * .35, s * .8); ctx.lineTo(0, s * .8 + fl); ctx.lineTo(s * .35, s * .8); ctx.fill();
-      ctx.fillStyle = "#cfd6df"; ctx.fillRect(-s * .45, -s * 1.2, s * .9, s * 2);
-      ctx.fillStyle = "#ff3322"; ctx.beginPath(); ctx.moveTo(-s * .45, -s * 1.2); ctx.lineTo(0, -s * 2.2); ctx.lineTo(s * .45, -s * 1.2); ctx.fill();
-      ctx.fillStyle = "#aa2222";
-      for (const sg of [-1, 1]) { ctx.beginPath(); ctx.moveTo(sg * s * .45, s * .3); ctx.lineTo(sg * s * 1.1, s * 1.1); ctx.lineTo(sg * s * .45, s * .8); ctx.fill(); }
-    }
-    ctx.restore(); return true; }
-  case "grenade": {
-    ctx.save(); ctx.translate(b.x, b.y); glow("#cccc44", 12);
-    ctx.fillStyle = "#667733"; ctx.beginPath(); ctx.arc(0, 0, s, 0, TAU); ctx.fill();
-    ctx.shadowBlur = 0; ctx.strokeStyle = "#445522"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(-s, 0); ctx.lineTo(s, 0); ctx.moveTo(0, -s); ctx.lineTo(0, s); ctx.stroke();
-    ctx.fillStyle = "rgba(255,255,255,.3)"; ctx.beginPath(); ctx.arc(-s * .35, -s * .35, s * .3, 0, TAU); ctx.fill();
-    ctx.fillStyle = "#888"; ctx.fillRect(-s * .3, -s * 1.3, s * .6, s * .4);
-    ctx.fillStyle = "hsl(" + (20 + (time * 25) % 40) + ",100%,60%)"; ctx.beginPath(); ctx.arc(s * .4, -s * 1.5, 2.5, 0, TAU); ctx.fill();
-    ctx.restore(); return true; }
-  case "flame": {
-    const hot = b.hue === 15, al = Math.min(1, b.life / 25), r = Math.max(2, s * 1.5);
-    ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.globalAlpha = al;
-    const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, r);
-    g.addColorStop(0, "rgba(255,255,220,1)"); g.addColorStop(.35, hot ? "rgba(255,110,20,.9)" : "rgba(255,190,40,.9)"); g.addColorStop(1, "rgba(255,40,0,0)");
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, TAU); ctx.fill();
-    ctx.restore(); return true; }
-  case "freeze": {
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(time * .08); glow("#a3e8ff", 20);
-    ctx.fillStyle = "#a3e8ff"; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.beginPath();
-    for (let i = 0; i < 12; i++) { const rr = i % 2 ? s * .7 : s * 1.6, a = i / 12 * TAU; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
-    ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
-    ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(0, 0, s * .4, 0, TAU); ctx.fill();
-    ctx.restore(); return true; }
-  case "iceshard": {
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(ang + Math.PI / 2); glow("#ccefff", 15);
-    ctx.fillStyle = "#bfe8ff"; ctx.beginPath(); ctx.moveTo(0, -s * 2.2); ctx.lineTo(s * .7, 0); ctx.lineTo(0, s * 1.2); ctx.lineTo(-s * .7, 0); ctx.closePath(); ctx.fill();
-    ctx.shadowBlur = 0; ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.beginPath(); ctx.moveTo(0, -s * 2.2); ctx.lineTo(s * .7, 0); ctx.lineTo(0, 0); ctx.fill();
-    ctx.restore(); return true; }
-  case "railgun": beam(b, 150, "#00eeff", s * 1.6 + 4); return true;
-  case "laser": beam(b, 260, "#ff00ff", s); return true;
-  case "sonic": {
-    const r = b.radius || s;
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(ang + Math.PI / 2); ctx.lineCap = "round"; glow("#66ffff", 15);
-    for (let i = 0; i < 3; i++) {
-      ctx.globalAlpha = 1 - i * .28; ctx.strokeStyle = i ? "#66ffff" : "#ffffff"; ctx.lineWidth = 4 - i;
-      ctx.beginPath(); ctx.arc(0, i * 10, r + i * 9, -Math.PI * .85, -Math.PI * .15); ctx.stroke();
-    }
-    ctx.restore(); return true; }
-  case "spike": {
-    ctx.save(); ctx.translate(b.x, b.y);
-    if (b.delay > 0) {
-      ctx.strokeStyle = "rgba(255,90,90," + (.5 + .4 * Math.sin(time * .6)) + ")"; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
-      ctx.beginPath(); ctx.arc(0, 0, s, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
-    } else {
-      ctx.globalAlpha = Math.min(1, b.life / 10); glow("#aabbbb", 14);
-      for (let i = -2; i <= 2; i++) {
-        const h = s * (1.5 - Math.abs(i) * .25), x = i * s * .4;
-        const g = ctx.createLinearGradient(0, s * .5, 0, s * .5 - h);
-        g.addColorStop(0, "#667788"); g.addColorStop(1, "#ffffff");
-        ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(x - s * .22, s * .5); ctx.lineTo(x, s * .5 - h); ctx.lineTo(x + s * .22, s * .5); ctx.fill();
-      }
-    }
-    ctx.restore(); return true; }
-  case "phoenix": {
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(ang + Math.PI / 2);
-    const fl = Math.sin(time * .5) * s * .5; glow("#ff6600", 22);
-    const g = ctx.createLinearGradient(0, -s * 2, 0, s * 2); g.addColorStop(0, "#ffee66"); g.addColorStop(.5, "#ff8800"); g.addColorStop(1, "rgba(255,40,0,0)");
-    ctx.fillStyle = g;
-    for (const sg of [-1, 1]) {
-      ctx.beginPath(); ctx.moveTo(0, -s * .4);
-      ctx.quadraticCurveTo(sg * s * 1.6, -s * 1.2 + fl, sg * s * 2.4, s * .4 + fl);
-      ctx.quadraticCurveTo(sg * s * 1.1, s * .1, 0, s * .8); ctx.fill();
-    }
-    ctx.beginPath(); ctx.moveTo(-s * .3, s * .6); ctx.lineTo(0, s * 2.8); ctx.lineTo(s * .3, s * .6); ctx.fill();
-    ctx.fillStyle = "#ffdd44"; ctx.beginPath(); ctx.ellipse(0, 0, s * .45, s * .8, 0, 0, TAU); ctx.fill();
-    ctx.fillStyle = "#ff4400"; ctx.beginPath(); ctx.moveTo(-s * .2, -s * .7); ctx.lineTo(0, -s * 1.3); ctx.lineTo(s * .2, -s * .7); ctx.fill();
-    ctx.restore(); return true; }
-  case "crazydiamond": {
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.spin || 0); glow("#66aaff", 20);
-    const g = ctx.createLinearGradient(-s, -s, s, s); g.addColorStop(0, "#ffaadd"); g.addColorStop(1, "#66aaff");
-    ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(0, -s * 1.4); ctx.lineTo(s, 0); ctx.lineTo(0, s * 1.4); ctx.lineTo(-s, 0); ctx.closePath(); ctx.fill();
-    ctx.shadowBlur = 0; ctx.strokeStyle = "rgba(255,255,255,.8)"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(0, -s * 1.4); ctx.lineTo(0, s * 1.4); ctx.moveTo(-s, 0); ctx.lineTo(s, 0); ctx.stroke();
-    ctx.restore(); return true; }
-  case "bow": arrow(b, s, "#c8a06a", "#ffffff"); return true;
-  case "crossbow": arrow(b, s, "#774411", "#ff4433"); return true;
-  case "mochi": {
-    ctx.save(); ctx.translate(b.x, b.y); glow("#ffe0a3", 20);
-    const g = ctx.createRadialGradient(-s * .3, -s * .3, 0, 0, 0, s); g.addColorStop(0, "#ffffff"); g.addColorStop(1, "#f3d9a8");
-    ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 0, s, s * .92, 0, 0, TAU); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.fillStyle = "#333"; const er = Math.max(1.5, s * .08);
-    ctx.beginPath(); ctx.arc(-s * .3, -s * .05, er, 0, TAU); ctx.arc(s * .3, -s * .05, er, 0, TAU); ctx.fill();
-    ctx.strokeStyle = "#333"; ctx.lineWidth = Math.max(1, s * .05); ctx.beginPath(); ctx.arc(0, s * .1, s * .16, .15 * Math.PI, .85 * Math.PI); ctx.stroke();
-    ctx.fillStyle = "rgba(255,130,150,.5)"; ctx.beginPath(); ctx.arc(-s * .55, s * .15, s * .13, 0, TAU); ctx.arc(s * .55, s * .15, s * .13, 0, TAU); ctx.fill();
-    ctx.restore(); return true; }
-  case "cluster": {
-    ctx.save(); ctx.translate(b.x, b.y); glow("#ccff33", 18);
-    ctx.fillStyle = "#334422"; ctx.beginPath(); ctx.arc(0, 0, s, 0, TAU); ctx.fill();
-    ctx.strokeStyle = "#ccff33"; ctx.lineWidth = 2; ctx.stroke();
-    ctx.beginPath(); ctx.arc(0, 0, s * .5, 0, TAU); ctx.stroke(); ctx.shadowBlur = 0;
-    ctx.fillStyle = "hsl(" + (20 + (time * 30) % 40) + ",100%,60%)"; ctx.beginPath(); ctx.arc(s * .7, -s * .95, 2.5, 0, TAU); ctx.fill();
-    ctx.restore(); return true; }
-  case "poison": {
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(ang + Math.PI / 2); glow("#88ff44", 15);
-    ctx.fillStyle = "#66dd33"; ctx.beginPath(); ctx.moveTo(0, -s * 1.6);
-    ctx.bezierCurveTo(s * 1.2, -s * .2, s, s, 0, s); ctx.bezierCurveTo(-s, s, -s * 1.2, -s * .2, 0, -s * 1.6); ctx.fill();
-    ctx.shadowBlur = 0; ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.ellipse(-s * .3, 0, s * .15, s * .35, .2, 0, TAU); ctx.fill();
-    ctx.restore(); return true; }
-  case "bubble": {
-    const w = 1 + Math.sin(time * .2 + b.x) * .06;
-    ctx.save(); ctx.translate(b.x, b.y); ctx.scale(w, 2 - w); glow("#aaddff", 12);
-    ctx.fillStyle = "rgba(170,221,255,.22)"; ctx.strokeStyle = "rgba(255,255,255,.85)"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(0, 0, s, 0, TAU); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
-    ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, s * .7, Math.PI * 1.1, Math.PI * 1.5); ctx.stroke();
-    ctx.restore(); return true; }
-  case "oraora": {
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(ang + Math.PI / 2); glow("#9966ff", 18);
-    ctx.fillStyle = "#8855ee"; ctx.fillRect(-s * .8, -s * .6, s * 1.6, s * 1.4);
-    ctx.fillStyle = "#bb99ff";
-    for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.arc(-s * .6 + i * s * .4, -s * .6, s * .25, 0, TAU); ctx.fill(); }
-    ctx.restore(); return true; }
-  }
-  return false;
-}
-const _db = window.drawBullet;
-window.drawBullet = function (b) { if (!drawWeaponBullet(b)) _db(b); };
-
 })();
 </script>
 <script>
@@ -5630,7 +6234,6 @@ window.drawBullet = function (b) { if (!drawWeaponBullet(b)) _db(b); };
 const glow=(c,n)=>{ctx.shadowColor=c;ctx.shadowBlur=n};
 function star(r,n,ir){ctx.beginPath();for(let i=0;i<n*2;i++){const a=-Math.PI/2+i*Math.PI/n,rr=i%2?ir:r;ctx.lineTo(Math.cos(a)*rr,Math.sin(a)*rr)}ctx.closePath()}
 function heart(s){ctx.beginPath();ctx.moveTo(0,s*.6);ctx.bezierCurveTo(-s*1.3,-s*.1,-s*.8,-s*1.1,0,-s*.5);ctx.bezierCurveTo(s*.8,-s*1.1,s*1.3,-s*.1,0,s*.6)}
-/* 拳(上向きが進行方向) */
 function fist(s,skin,line,band,gl){
   glow(gl,16);ctx.fillStyle=skin;ctx.strokeStyle=line;ctx.lineWidth=Math.max(1.5,s*.12);
   ctx.beginPath();ctx.rect(-s*.8,-s*.5,s*1.6,s*1.25);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
@@ -5720,13 +6323,23 @@ function drawJ(b){
     ctx.shadowBlur=0;ctx.fillStyle="#ffcc33";ctx.fillRect(-k,k*.1,k*2,k*.35);
     ctx.fillStyle="hsl("+(20+(time*30)%40)+",100%,60%)";ctx.beginPath();ctx.arc(0,k*1.3+Math.random()*3,3,0,TAU);ctx.fill();
     ctx.restore();return true}
+  case"yoyo":{
+    ctx.save();ctx.translate(b.x,b.y);ctx.rotate(time*.5);glow("#ff66aa",18);
+    ctx.fillStyle="#ff66aa";ctx.beginPath();ctx.arc(0,0,s,0,TAU);ctx.fill();
+    ctx.fillStyle="#ffffff";ctx.beginPath();ctx.arc(0,0,s*.45,0,TAU);ctx.fill();
+    ctx.fillStyle="#ff66aa";ctx.beginPath();ctx.arc(0,0,s*.2,0,TAU);ctx.fill();
+    ctx.restore();return true}
+  case"frisbee":{
+    ctx.save();ctx.translate(b.x,b.y);ctx.rotate(b.spin||0);glow("#66ffcc",18);
+    ctx.strokeStyle="#66ffcc";ctx.lineWidth=5;ctx.beginPath();ctx.arc(0,0,s,0,TAU);ctx.stroke();
+    ctx.strokeStyle="#ffffff";ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,s*.6,0,TAU);ctx.stroke();
+    ctx.restore();return true}
   }
   return false;
 }
 const _db=window.drawBullet;
 window.drawBullet=function(b){if(!drawJ(b))_db(b)};
 
-/* スタンド(プレイヤーの背後) + 時計(MADE IN HEAVEN) */
 const STANDS={oraora:["#8855ee","#ffd700"],starplatinum:["#8855ee","#ffd700"],mudamuda:["#ffd23a","#222222"],crazydiamond:["#ff88bb","#66aaff"],goldexperience:["#ffd23a","#33aa33"],killerqueen:["#ff88bb","#222222"],madeinheaven:["#ffffff","#aaaaaa"],goldenwind:["#ffd23a","#ffffff"]};
 function stand(x,y,c1,c2,punch){
   const bob=Math.sin(time*.15)*3;ctx.save();ctx.translate(x,y-38+bob);ctx.globalAlpha=.42;glow(c1,25);
@@ -5748,7 +6361,6 @@ window.drawPlayer=function(){
   _dp();
 };
 
-/* 敵まわり: ムダムダ連打 / キラークイーン爆弾 */
 const _den=window.drawEnemies;
 window.drawEnemies=function(){
   _den();
@@ -5764,7 +6376,6 @@ window.drawEnemies=function(){
   }
 };
 
-/* 骨 / ガスターブラスター(頭蓋骨) */
 const _de=window.drawEffects;
 window.drawEffects=function(){
   _de();
@@ -5782,7 +6393,6 @@ window.drawEffects=function(){
   }
 };
 
-/* 地雷・サボテン */
 window.drawMines=function(){
   for(const m of mines){
     ctx.save();ctx.translate(m.x,m.y);
@@ -5802,7 +6412,6 @@ window.drawMines=function(){
     ctx.restore();
   }
 };
-/* タレット / ドローン */
 window.drawTurrets=function(){
   for(const t of turrets){
     ctx.save();ctx.translate(t.x,t.y);
@@ -5819,7 +6428,6 @@ window.drawTurrets=function(){
     ctx.restore();
   }
 };
-/* 周回衛星 + チェーンソー(もともと見えなかった) */
 window.drawOrbit=function(){
   if(selectedWeapon==="orbit"||activeWeapons.includes("orbit")){
     const p=pw("orbit"),c=Math.max(1,level)+p*2,r=52+Math.min(25,level*1.5)+p*8;
@@ -5842,15 +6450,14 @@ window.drawOrbit=function(){
 (function(){
 "use strict";
 
-/* セーブデータ保証 */
 function ensureGiftFields(){
   if (typeof saveData.userName !== "string") saveData.userName = "";
   if (!Array.isArray(saveData.giftInbox)) saveData.giftInbox = [];
   if (!Array.isArray(saveData.giftSent)) saveData.giftSent = [];
+  if (!Array.isArray(saveData.redeemedGifts)) saveData.redeemedGifts = [];
 }
 ensureGiftFields();
 
-/* ========== 名前入力 ========== */
 let nameInputActive = false;
 let nameInputText = "";
 let nameInputError = "";
@@ -5864,61 +6471,43 @@ function openNameInput(){
   nameInputError = "";
   if (nameEl) {
     nameEl.value = nameInputText;
-    nameEl.style.opacity = "1";
-    nameEl.style.pointerEvents = "auto";
-    nameEl.style.top = "50%";
-    nameEl.style.left = "50%";
-    nameEl.style.width = "300px";
-    nameEl.style.height = "44px";
+    nameEl.style.opacity = "1"; nameEl.style.pointerEvents = "auto";
+    nameEl.style.top = "50%"; nameEl.style.left = "50%";
+    nameEl.style.width = "300px"; nameEl.style.height = "44px";
     nameEl.style.transform = "translate(-50%,-50%)";
-    nameEl.style.fontSize = "20px";
-    nameEl.style.textAlign = "center";
-    nameEl.style.zIndex = "9999";
-    nameEl.style.background = "#001a1a";
-    nameEl.style.color = "#00ffcc";
-    nameEl.style.border = "2px solid #00ffcc";
-    nameEl.style.borderRadius = "6px";
-    nameEl.focus();
+    nameEl.style.fontSize = "20px"; nameEl.style.textAlign = "center";
+    nameEl.style.zIndex = "9999"; nameEl.style.background = "#001a1a";
+    nameEl.style.color = "#00ffcc"; nameEl.style.border = "2px solid #00ffcc";
+    nameEl.style.borderRadius = "6px"; nameEl.focus();
   }
 }
 function closeNameInput(){
   nameInputActive = false;
   if (nameEl) {
-    nameEl.style.opacity = "0";
-    nameEl.style.pointerEvents = "none";
-    nameEl.style.top = "0";
-    nameEl.style.left = "0";
-    nameEl.style.width = "1px";
-    nameEl.style.height = "1px";
-    nameEl.style.transform = "none";
-    nameEl.blur();
+    nameEl.style.opacity = "0"; nameEl.style.pointerEvents = "none";
+    nameEl.style.top = "0"; nameEl.style.left = "0";
+    nameEl.style.width = "1px"; nameEl.style.height = "1px";
+    nameEl.style.transform = "none"; nameEl.blur();
   }
 }
 function confirmNameInput(){
   const t = (nameEl ? nameEl.value : nameInputText).trim();
   if (t.length < 1) { nameInputError = "名前を入力してください"; return; }
   if (t.length > 12) { nameInputError = "12文字以内で入力してください"; return; }
-  saveData.userName = t;
-  writeSave();
-  closeNameInput();
+  saveData.userName = t; writeSave(); closeNameInput();
   sfx.coin(); shake(20); flash("#00ffcc", 8); chroma(10);
   burst(W/2, H/2, 60, "#00ffcc"); burst(W/2, H/2, 30, "#ffffff");
 }
 if (nameEl) {
   nameEl.addEventListener("input", () => { nameInputText = nameEl.value; });
-  nameEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); confirmNameInput(); }
-  });
+  nameEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); confirmNameInput(); } });
 }
-
 function drawNameInput(){
   ctx.save();
-  ctx.fillStyle = "rgba(0,0,10,.95)";
-  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "rgba(0,0,10,.95)"; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
   ctx.shadowBlur = 30; ctx.shadowColor = "#00ffcc";
-  ctx.fillStyle = "#00ffcc"; ctx.font = "bold 32px Arial";
-  ctx.fillText("ようこそ！", W/2, 160);
+  ctx.fillStyle = "#00ffcc"; ctx.font = "bold 32px Arial"; ctx.fillText("ようこそ！", W/2, 160);
   ctx.font = "bold 18px Arial"; ctx.fillStyle = "#ffffff"; ctx.shadowBlur = 15;
   ctx.fillText("プレイヤー名を登録してください", W/2, 210);
   const bw = 340, bh = 60, bx = (W-bw)/2, by = 280;
@@ -5940,11 +6529,9 @@ function drawNameInput(){
   ctx.shadowBlur = 0;
   ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "12px Arial";
   ctx.fillText("テキストボックスに入力 → Enter または 決定ボタン", W/2, 500);
-  ctx.restore();
-  ctx.textAlign = "left";
+  ctx.restore(); ctx.textAlign = "left";
 }
 
-/* ========== プレゼント機能 ========== */
 let giftScreen = "none";
 let giftSelectedType = null;
 let giftSelectedCoin = 100;
@@ -5958,24 +6545,16 @@ let inboxScreen = false;
 let inboxScroll = 0;
 const GIFT_COIN_PRESETS = [50, 100, 300, 500, 1000];
 
-/* ★ プレゼントボタンは右上（設定ボタンの下）に丸ボタンとして配置 */
 const TITLE_GIFT_BTN_R = 24;
-const TITLE_GIFT_BTN_X = W - TITLE_GIFT_BTN_R - 16;   // 設定ボタンと同じX
-const TITLE_GIFT_BTN_Y = 40 + 24 + 24 + 16;           // 設定ボタンの下
+const TITLE_GIFT_BTN_X = W - TITLE_GIFT_BTN_R - 16;
+const TITLE_GIFT_BTN_Y = 40 + 24 + 24 + 16;
 
 function openGiftMenu(){
-  giftScreen = "menu";
-  giftSelectedType = null;
-  giftSelectedCoin = 100;
-  giftSelectedWeapon = null;
-  giftTargetUser = "";
-  giftMessage = "";
-  giftTargetError = "";
-  giftMessageError = "";
-  sfx.tap();
+  giftScreen = "menu"; giftSelectedType = null; giftSelectedCoin = 100;
+  giftSelectedWeapon = null; giftTargetUser = ""; giftMessage = "";
+  giftTargetError = ""; giftMessageError = ""; sfx.tap();
 }
 function closeGift(){ giftScreen = "none"; sfx.tap(); }
-
 function canSendGift(){
   if (giftSelectedType === "coin") return saveData.coins >= giftSelectedCoin && giftSelectedCoin > 0;
   if (giftSelectedType === "weapon") {
@@ -5984,21 +6563,14 @@ function canSendGift(){
   }
   return false;
 }
-
 function sendGift(){
   if (!canSendGift()) return;
-  const gift = {
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-    from: saveData.userName,
-    to: giftTargetUser.trim(),
-    type: giftSelectedType,
+  const gift = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    from: saveData.userName, to: giftTargetUser.trim(), type: giftSelectedType,
     value: giftSelectedType === "coin" ? giftSelectedCoin : giftSelectedWeapon,
-    message: giftMessage.trim(),
-    date: Date.now()
-  };
-  if (giftSelectedType === "coin") {
-    saveData.coins -= giftSelectedCoin;
-  } else {
+    message: giftMessage.trim(), date: Date.now() };
+  if (giftSelectedType === "coin") { saveData.coins -= giftSelectedCoin; }
+  else {
     const idx = saveData.ownedWeapons.indexOf(giftSelectedWeapon);
     if (idx >= 0) saveData.ownedWeapons.splice(idx, 1);
     if (selectedWeapon === giftSelectedWeapon) selectedWeapon = "normal";
@@ -6013,16 +6585,12 @@ function sendGift(){
     const SHARED_KEY = "neonBulletGiftInbox_v1";
     const raw = localStorage.getItem(SHARED_KEY);
     const box = raw ? JSON.parse(raw) : [];
-    box.push(gift);
-    localStorage.setItem(SHARED_KEY, JSON.stringify(box));
+    box.push(gift); localStorage.setItem(SHARED_KEY, JSON.stringify(box));
   } catch (e) {}
-  writeSave();
-  sfx.clear();
-  shake(40); flash("#ffd700", 12); chroma(20);
+  writeSave(); sfx.clear(); shake(40); flash("#ffd700", 12); chroma(20);
   burst(W/2, H/2, 100, "#ffd700"); burst(W/2, H/2, 50, "#ffffff");
   giftScreen = "sent";
 }
-
 let giftLastCode = "", giftCopied = false;
 function makeGiftCode(g){
   try { return "NBG1-" + btoa(unescape(encodeURIComponent(JSON.stringify({ i:g.id, f:g.from, t:g.to, y:g.type, v:g.value, m:g.message })))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); } catch (e) { return ""; }
@@ -6061,21 +6629,51 @@ function receiveGifts(){
     if (n > 0) showGiftReceivePopup(n);
   } catch (e) {}
 }
-function redeemGiftCodePrompt(){
-  const c = prompt("もらったギフトコードを貼り付けてね (NBG1- から始まる文字)");
+const giftCodeEl = document.getElementById("giftCodeInput");
+let giftCodeInputActive = false;
+function openGiftCodeInput(){
+  giftCodeInputActive = true;
+  if (giftCodeEl) {
+    giftCodeEl.value = "";
+    giftCodeEl.style.opacity = "1"; giftCodeEl.style.pointerEvents = "auto";
+    giftCodeEl.style.top = "50%"; giftCodeEl.style.left = "50%";
+    giftCodeEl.style.width = "320px"; giftCodeEl.style.height = "44px";
+    giftCodeEl.style.transform = "translate(-50%,-50%)";
+    giftCodeEl.style.fontSize = "14px"; giftCodeEl.style.textAlign = "center";
+    giftCodeEl.style.zIndex = "9999"; giftCodeEl.style.background = "#001a1a";
+    giftCodeEl.style.color = "#ffd700"; giftCodeEl.style.border = "2px solid #ffd700";
+    giftCodeEl.style.borderRadius = "6px"; giftCodeEl.focus();
+  }
+}
+function closeGiftCodeInput(){
+  giftCodeInputActive = false;
+  if (giftCodeEl) {
+    giftCodeEl.style.opacity = "0"; giftCodeEl.style.pointerEvents = "none";
+    giftCodeEl.style.top = "0"; giftCodeEl.style.left = "0";
+    giftCodeEl.style.width = "1px"; giftCodeEl.style.height = "1px";
+    giftCodeEl.style.transform = "none"; giftCodeEl.blur();
+  }
+}
+function confirmGiftCode(){
+  const c = (giftCodeEl ? giftCodeEl.value : "").trim();
   if (!c) return;
   const g = parseGiftCode(c);
   if (!g) { alert("コードが正しくありません"); return; }
-  if ((g.to || "").toLowerCase() !== (saveData.userName || "").toLowerCase()) { alert("このギフトは「" + g.to + "」さん宛てです(あなたの名前: " + saveData.userName + ")"); return; }
+  if ((g.to || "").toLowerCase() !== (saveData.userName || "").toLowerCase()) {
+    alert(`このギフトは「${g.to}」さん宛てです\n(あなたの名前: ${saveData.userName})`); return;
+  }
   const r = applyGift(g);
-  if (r === "ok") { showGiftReceivePopup(1); sfx.coin(); }
+  if (r === "ok") { closeGiftCodeInput(); showGiftReceivePopup(1); sfx.coin(); shake(30); flash("#ffd700", 10); chroma(15); }
   else alert(r === "already" ? "このコードは使用済みです" : r === "own" ? "自分で送ったギフトは受け取れません" : "このギフトは受け取れませんでした");
 }
-function copyGiftCode(){
-  const c = giftLastCode;
-  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(c).then(() => { giftCopied = true; }).catch(() => prompt("コピーして相手に送ってね", c));
-  else prompt("コピーして相手に送ってね", c);
+if (giftCodeEl) {
+  giftCodeEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); confirmGiftCode(); }
+    if (e.key === "Escape") { e.preventDefault(); closeGiftCodeInput(); }
+  });
 }
+function redeemGiftCodePrompt(){ openGiftCodeInput(); }
+
 let giftDrag = null;
 function giftScrollMax(){
   if (inboxScreen) return Math.max(0, saveData.giftInbox.length*100 - (H-150-90));
@@ -6106,8 +6704,7 @@ function drawGiftReceivePopup(){
   ctx.fillText("🎁 プレゼント受信！", W/2, by+38);
   ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
   ctx.fillText(`${giftReceivePopup.count} 件のギフトを受け取りました`, W/2, by+70);
-  ctx.restore();
-  ctx.textAlign = "left";
+  ctx.restore(); ctx.textAlign = "left";
 }
 
 function drawGiftScreen(){
@@ -6122,7 +6719,6 @@ function drawGiftScreen(){
   ctx.fillText(`あなた: ${saveData.userName}`, W/2, 75);
   ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
   ctx.fillText(`🪙 ${saveData.coins}`, W/2, 95);
-
   if (giftScreen === "menu") {
     const bw = 300, bh = 60, bx = (W-bw)/2;
     const items = [
@@ -6138,8 +6734,7 @@ function drawGiftScreen(){
       ctx.fillStyle = it.color; ctx.font = "bold 18px Arial";
       ctx.fillText(it.label, W/2, it.y+38);
     }
-  }
-  else if (giftScreen === "coin") {
+  } else if (giftScreen === "coin") {
     ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
     ctx.fillText("送るコイン数を選択", W/2, 160);
     const bw = 140, bh = 50, gap = 12;
@@ -6163,8 +6758,7 @@ function drawGiftScreen(){
     ctx.fillStyle = "#222"; ctx.fillRect(sx, sy, sw, 10);
     ctx.fillStyle = "#ffd700"; ctx.shadowBlur = 10; ctx.shadowColor = "#ffd700";
     const ratio = Math.min(1, giftSelectedCoin / 1000);
-    ctx.fillRect(sx, sy, sw*ratio, 10);
-    ctx.shadowBlur = 0;
+    ctx.fillRect(sx, sy, sw*ratio, 10); ctx.shadowBlur = 0;
     ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(sx+sw*ratio, sy+5, 12, 0, TAU); ctx.fill();
     ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 2; ctx.stroke();
     const canGo = saveData.coins >= giftSelectedCoin && giftSelectedCoin > 0;
@@ -6181,8 +6775,7 @@ function drawGiftScreen(){
     ctx.fillStyle = "rgba(136,136,136,.15)"; ctx.fillRect(nx, by2, bw2, bh2);
     ctx.fillStyle = "#888"; ctx.font = "bold 18px Arial";
     ctx.fillText("◀ 戻る", nx+bw2/2, by2+32);
-  }
-  else if (giftScreen === "weapon") {
+  } else if (giftScreen === "weapon") {
     ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
     ctx.fillText("送る武器を選択", W/2, 130);
     ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "11px Arial";
@@ -6192,23 +6785,20 @@ function drawGiftScreen(){
     const LT = 170, IH = 56, GAP = 8;
     for (let i = 0; i < unique.length; i++) {
       const k = unique[i];
-      const cnt = list.filter(x => x === k).length;
       const y = LT + i*(IH+GAP) - giftWeaponScroll;
       if (y+IH < LT || y > H-120) continue;
       const w = weapons[k];
-      const can = true;
-      const col = can ? w.color : "#555";
-      ctx.shadowBlur = can ? 15 : 0; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = 3;
+      const col = w.color;
+      ctx.shadowBlur = 15; ctx.shadowColor = col; ctx.strokeStyle = col; ctx.lineWidth = 3;
       ctx.strokeRect(24, y, W-48, IH);
-      ctx.fillStyle = can ? "rgba(255,255,255,.06)" : "rgba(60,60,60,.3)";
-      ctx.fillRect(24, y, W-48, IH);
+      ctx.fillStyle = "rgba(255,255,255,.06)"; ctx.fillRect(24, y, W-48, IH);
       ctx.textAlign = "left";
-      ctx.fillStyle = can ? "#fff" : "#888"; ctx.font = "bold 15px Arial";
+      ctx.fillStyle = "#fff"; ctx.font = "bold 15px Arial";
       ctx.fillText(w.name, 40, y+24);
       ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.font = "11px Arial";
       ctx.fillText(w.description, 40, y+42);
       ctx.textAlign = "right";
-      ctx.fillStyle = can ? "#ffd700" : "#666"; ctx.font = "bold 14px Arial";
+      ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
       ctx.fillText(giftSelectedWeapon === k ? "✔ 選択中" : "タップで選択", W-40, y+34);
       ctx.textAlign = "center";
     }
@@ -6230,8 +6820,7 @@ function drawGiftScreen(){
     ctx.fillStyle = "rgba(136,136,136,.15)"; ctx.fillRect(nx, by2, bw2, bh2);
     ctx.fillStyle = "#888"; ctx.font = "bold 18px Arial";
     ctx.fillText("◀ 戻る", nx+bw2/2, by2+32);
-  }
-  else if (giftScreen === "target") {
+  } else if (giftScreen === "target") {
     ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
     ctx.fillText("送信先ユーザー名を入力", W/2, 160);
     const bw = 320, bh = 60, bx = (W-bw)/2, by = 200;
@@ -6241,10 +6830,7 @@ function drawGiftScreen(){
     ctx.shadowBlur = 10; ctx.fillStyle = "#fff"; ctx.font = "bold 22px Arial";
     const caret = (Math.floor(Date.now()/500)%2) ? "|" : "";
     ctx.fillText((giftTargetUser + caret) || caret, W/2, by+40);
-    if (giftTargetError) {
-      ctx.fillStyle = "#ff6666"; ctx.font = "bold 14px Arial";
-      ctx.fillText(giftTargetError, W/2, by+90);
-    }
+    if (giftTargetError) { ctx.fillStyle = "#ff6666"; ctx.font = "bold 14px Arial"; ctx.fillText(giftTargetError, W/2, by+90); }
     const canGo = giftTargetUser.trim().length > 0;
     const bw2 = 140, bh2 = 50, by2 = 320;
     const yx = W/2 - bw2 - 8, nx = W/2 + 8;
@@ -6259,8 +6845,7 @@ function drawGiftScreen(){
     ctx.fillStyle = "rgba(136,136,136,.15)"; ctx.fillRect(nx, by2, bw2, bh2);
     ctx.fillStyle = "#888"; ctx.font = "bold 18px Arial";
     ctx.fillText("◀ 戻る", nx+bw2/2, by2+32);
-  }
-  else if (giftScreen === "message") {
+  } else if (giftScreen === "message") {
     ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
     ctx.fillText("メッセージを入力", W/2, 160);
     const bw = 340, bh = 120, bx = (W-bw)/2, by = 200;
@@ -6271,35 +6856,25 @@ function drawGiftScreen(){
     const maxW = bw - 20;
     const words = (giftMessage + ((Math.floor(Date.now()/500)%2) ? "|" : "")).split("");
     let line = "", lines = [];
-    for (const ch of words) {
-      if (ctx.measureText(line+ch).width > maxW) { lines.push(line); line = ch; }
-      else line += ch;
-    }
+    for (const ch of words) { if (ctx.measureText(line+ch).width > maxW) { lines.push(line); line = ch; } else line += ch; }
     lines.push(line);
-    for (let i = 0; i < Math.min(lines.length, 5); i++) {
-      ctx.textAlign = "left";
-      ctx.fillText(lines[i], bx+10, by+28+i*22);
-      ctx.textAlign = "center";
-    }
+    for (let i = 0; i < Math.min(lines.length, 5); i++) { ctx.textAlign = "left"; ctx.fillText(lines[i], bx+10, by+28+i*22); ctx.textAlign = "center"; }
     ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.font = "13px Arial";
     ctx.fillText(`送信先: ${giftTargetUser}`, W/2, 360);
     ctx.fillText(`内容: ${giftSelectedType === "coin" ? "🪙 " + giftSelectedCoin : "⚔️ " + weapons[giftSelectedWeapon].name}`, W/2, 385);
-    const canGo = true;
     const bw2 = 140, bh2 = 50, by2 = 430;
     const yx = W/2 - bw2 - 8, nx = W/2 + 8;
-    ctx.shadowBlur = canGo ? 20 : 0; ctx.shadowColor = "#ffd700"; ctx.strokeStyle = canGo ? "#ffd700" : "#555"; ctx.lineWidth = 3;
+    ctx.shadowBlur = 20; ctx.shadowColor = "#ffd700"; ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 3;
     ctx.strokeRect(yx, by2, bw2, bh2);
-    ctx.fillStyle = canGo ? "rgba(255,215,0,.15)" : "rgba(80,80,80,.3)";
-    ctx.fillRect(yx, by2, bw2, bh2);
-    ctx.fillStyle = canGo ? "#ffd700" : "#888"; ctx.font = "bold 18px Arial";
+    ctx.fillStyle = "rgba(255,215,0,.15)"; ctx.fillRect(yx, by2, bw2, bh2);
+    ctx.fillStyle = "#ffd700"; ctx.font = "bold 18px Arial";
     ctx.fillText("送信 ▶", yx+bw2/2, by2+32);
     ctx.shadowBlur = 20; ctx.shadowColor = "#888"; ctx.strokeStyle = "#888"; ctx.lineWidth = 3;
     ctx.strokeRect(nx, by2, bw2, bh2);
     ctx.fillStyle = "rgba(136,136,136,.15)"; ctx.fillRect(nx, by2, bw2, bh2);
     ctx.fillStyle = "#888"; ctx.font = "bold 18px Arial";
     ctx.fillText("◀ 戻る", nx+bw2/2, by2+32);
-  }
-  else if (giftScreen === "sent") {
+  } else if (giftScreen === "sent") {
     ctx.shadowBlur = 30; ctx.shadowColor = "#ffd700";
     ctx.fillStyle = "#ffd700"; ctx.font = "bold 34px Arial";
     ctx.fillText("🎁 送信完了！", W/2, 240);
@@ -6320,8 +6895,7 @@ function drawGiftScreen(){
     ctx.fillStyle = "#00ffcc"; ctx.font = "bold 18px Arial";
     ctx.fillText("タイトルへ戻る", W/2, by+32);
   }
-  ctx.restore();
-  ctx.textAlign = "left";
+  ctx.restore(); ctx.textAlign = "left";
 }
 
 function drawInbox(){
@@ -6353,19 +6927,21 @@ function drawInbox(){
     ctx.textAlign = "center";
   }
   ctx.shadowBlur = 15; ctx.shadowColor = "#ffd700"; ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 2;
-  ctx.strokeRect((W-260)/2, H-140, 260, 40); ctx.fillStyle = "#ffd700"; ctx.font = "bold 14px Arial";
-  ctx.fillText("🔑 ギフトコードを入力して受け取る", W/2, H-114);
+  ctx.strokeRect((W-320)/2, H-140, 320, 40);
+  ctx.fillStyle = "rgba(255,215,0,.08)"; ctx.fillRect((W-320)/2, H-140, 320, 40);
+  if (!giftCodeInputActive) {
+    ctx.fillStyle = "#ffd700"; ctx.font = "bold 13px Arial";
+    ctx.fillText("🔑 ここをタップしてコードを入力", W/2, H-114);
+  }
   const bby = H-45, bbw = 200, bbx = (W-bbw)/2;
   ctx.shadowBlur = 20; ctx.shadowColor = "#00ffcc"; ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 3;
   ctx.strokeRect(bbx, bby-22, bbw, 44);
   ctx.fillStyle = "rgba(0,255,204,.15)"; ctx.fillRect(bbx, bby-22, bbw, 44);
   ctx.fillStyle = "#00ffcc"; ctx.font = "bold 18px Arial";
   ctx.fillText("◀ 戻る", W/2, bby+7);
-  ctx.restore();
-  ctx.textAlign = "left";
+  ctx.restore(); ctx.textAlign = "left";
 }
 
-/* ========== タイトルへ組み込み ========== */
 const _origDrawTitle = window.drawTitle;
 window.drawTitle = function(){
   if (needsNameInput() && !nameInputActive) openNameInput();
@@ -6374,8 +6950,6 @@ window.drawTitle = function(){
   drawGiftButton();
   drawGiftReceivePopup();
 };
-
-/* ★ 丸ボタン描画（右上・設定ボタンの下） */
 function drawGiftButton(){
   if (showDailyBonusPopup) return;
   ctx.save();
@@ -6384,46 +6958,41 @@ function drawGiftButton(){
   const hue = (Date.now()*0.2)%360;
   ctx.shadowBlur = 25; ctx.shadowColor = `hsl(${hue},100%,60%)`;
   ctx.fillStyle = "rgba(0,20,30,.7)";
-  ctx.strokeStyle = `hsl(${hue},100%,60%)`;
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = `hsl(${hue},100%,60%)`; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill(); ctx.stroke();
   ctx.shadowBlur = 0;
   ctx.font = "bold 22px Arial";
   ctx.fillStyle = `hsl(${hue},100%,70%)`;
   ctx.fillText("🎁", cx, cy + 1);
-  ctx.restore();
-  ctx.textAlign = "left";
+  ctx.restore(); ctx.textAlign = "left";
 }
-
-/* 描画フック */
 const _origDraw = window.draw;
 window.draw = function(){
   if (giftScreen !== "none") { drawBackground(); drawGiftScreen(); return; }
   if (inboxScreen) { drawBackground(); drawInbox(); return; }
   _origDraw();
 };
-
-/* ========== 入力フック ========== */
-const _origStart = startPointer;
 function giftStart(e){
-  if (e.target === nameEl) return;
+  if (e.target === nameEl || e.target === giftCodeEl) return;
   if (nameInputActive) {
     e.stopImmediatePropagation(); e.preventDefault();
     const p = getPointerPosition(e);
     const cbw = 220, cbh = 54, cbx = (W-cbw)/2, cby = 400;
-    if (p.x >= cbx && p.x <= cbx+cbw && p.y >= cby && p.y <= cby+cbh) {
-      initAudio(); sfx.tap(); confirmNameInput();
-    }
+    if (p.x >= cbx && p.x <= cbx+cbw && p.y >= cby && p.y <= cby+cbh) { initAudio(); sfx.tap(); confirmNameInput(); }
+    return;
+  }
+  if (giftCodeInputActive) {
+    e.stopImmediatePropagation(); e.preventDefault();
+    const p = getPointerPosition(e);
+    if (!(p.x >= (W-320)/2 && p.x <= (W+320)/2 && p.y >= H-140 && p.y <= H-100)) confirmGiftCode();
     return;
   }
   if (giftScreen === "none" && !inboxScreen && titleScreen && !showDailyBonusPopup && !abortPopup && !settingsScreen) {
     const p = getPointerPosition(e);
-    const dx = p.x - TITLE_GIFT_BTN_X;
-    const dy = p.y - TITLE_GIFT_BTN_Y;
+    const dx = p.x - TITLE_GIFT_BTN_X, dy = p.y - TITLE_GIFT_BTN_Y;
     if (dx*dx + dy*dy <= TITLE_GIFT_BTN_R*TITLE_GIFT_BTN_R) {
       e.stopImmediatePropagation(); e.preventDefault();
-      initAudio(); openGiftMenu();
-      return;
+      initAudio(); openGiftMenu(); return;
     }
   }
   if (giftScreen !== "none" || inboxScreen) {
@@ -6432,7 +7001,7 @@ function giftStart(e){
     const p = getPointerPosition(e);
     giftDrag = { y: p.y, s: inboxScreen ? inboxScroll : giftWeaponScroll };
     if (inboxScreen) {
-      if (p.x >= (W-260)/2 && p.x <= (W+260)/2 && p.y >= H-140 && p.y <= H-100) { redeemGiftCodePrompt(); return; }
+      if (p.x >= (W-320)/2 && p.x <= (W+320)/2 && p.y >= H-140 && p.y <= H-100) { openGiftCodeInput(); return; }
       const bby = H-45, bbw = 200, bbx = (W-bbw)/2;
       if (p.x >= bbx && p.x <= bbx+bbw && p.y >= bby-22 && p.y <= bby+22) { sfx.tap(); inboxScreen = false; }
       return;
@@ -6445,9 +7014,7 @@ function giftStart(e){
         { y: 340, action: () => { receiveGifts(); inboxScreen = true; inboxScroll = 0; sfx.tap(); } },
         { y: 440, action: closeGift }
       ];
-      for (const it of items) {
-        if (p.x >= bx && p.x <= bx+bw && p.y >= it.y && p.y <= it.y+bh) { it.action(); return; }
-      }
+      for (const it of items) if (p.x >= bx && p.x <= bx+bw && p.y >= it.y && p.y <= it.y+bh) { it.action(); return; }
       return;
     }
     if (giftScreen === "coin") {
@@ -6463,10 +7030,7 @@ function giftStart(e){
         }
       }
       const sx = 60, sw = W-120, sy = 400;
-      if (p.x >= sx && p.x <= sx+sw && p.y >= sy-20 && p.y <= sy+20) {
-        giftSelectedCoin = Math.max(1, Math.round((p.x - sx)/sw*1000));
-        return;
-      }
+      if (p.x >= sx && p.x <= sx+sw && p.y >= sy-20 && p.y <= sy+20) { giftSelectedCoin = Math.max(1, Math.round((p.x - sx)/sw*1000)); return; }
       const bw2 = 140, bh2 = 50, by2 = 470;
       const yx = W/2 - bw2 - 8, nx = W/2 + 8;
       const canGo = saveData.coins >= giftSelectedCoin && giftSelectedCoin > 0;
@@ -6480,12 +7044,8 @@ function giftStart(e){
       const LT = 170, IH = 56, GAP = 8;
       for (let i = 0; i < unique.length; i++) {
         const k = unique[i];
-        const cnt = list.filter(x => x === k).length;
         const y = LT + i*(IH+GAP) - giftWeaponScroll;
-        if (p.x >= 24 && p.x <= W-24 && p.y >= y && p.y <= y+IH) {
-          { giftSelectedWeapon = k; sfx.tap(); }
-          return;
-        }
+        if (p.x >= 24 && p.x <= W-24 && p.y >= y && p.y <= y+IH) { giftSelectedWeapon = k; sfx.tap(); return; }
       }
       const bw2 = 140, bh2 = 50, by2 = H-70;
       const yx = W/2 - bw2 - 8, nx = W/2 + 8;
@@ -6507,8 +7067,7 @@ function giftStart(e){
       if (p.x >= (W-340)/2 && p.x <= (W+340)/2 && p.y >= 200 && p.y <= 320) { const v = prompt("メッセージ(空でもOK)", giftMessage); if (v !== null) giftMessage = v.slice(0, 80); return; }
       const bw2 = 140, bh2 = 50, by2 = 430;
       const yx = W/2 - bw2 - 8, nx = W/2 + 8;
-      const canGo = true;
-      if (p.x >= yx && p.x <= yx+bw2 && p.y >= by2 && p.y <= by2+bh2) { if (canGo) sendGift(); return; }
+      if (p.x >= yx && p.x <= yx+bw2 && p.y >= by2 && p.y <= by2+bh2) { sendGift(); return; }
       if (p.x >= nx && p.x <= nx+bw2 && p.y >= by2 && p.y <= by2+bh2) { giftScreen = "target"; sfx.tap(); return; }
       return;
     }
@@ -6526,34 +7085,23 @@ canvas.addEventListener("mousedown", giftStart, { capture:true });
 canvas.removeEventListener("touchstart", startPointer);
 canvas.removeEventListener("mousedown", startPointer);
 
-/* 名前入力のキーボード処理を元ハンドラより先に処理 */
 window.addEventListener("keydown", (e) => {
-  if (nameInputActive) {
-    e.stopImmediatePropagation();
-    return;
-  }
+  if (nameInputActive) { e.stopImmediatePropagation(); return; }
+  if (giftCodeInputActive) { e.stopImmediatePropagation(); return; }
   if (giftScreen === "target" || giftScreen === "message") {
     e.stopImmediatePropagation();
     if (e.key === "Enter") {
       if (giftScreen === "target" && giftTargetUser.trim().length > 0) { giftScreen = "message"; sfx.tap(); }
       else if (giftScreen === "message" && true) sendGift();
-    } else if (e.key === "Escape") {
-      giftScreen = giftScreen === "target" ? "menu" : "target";
-    } else if (e.key === "Backspace") {
-      if (giftScreen === "target") giftTargetUser = giftTargetUser.slice(0, -1);
-      else giftMessage = giftMessage.slice(0, -1);
-    } else if (e.key.length === 1 && giftScreen === "target" && giftTargetUser.length < 12) {
-      giftTargetUser += e.key;
-    } else if (e.key.length === 1 && giftScreen === "message" && giftMessage.length < 80) {
-      giftMessage += e.key;
-    }
+    } else if (e.key === "Escape") { giftScreen = giftScreen === "target" ? "menu" : "target"; }
+    else if (e.key === "Backspace") { if (giftScreen === "target") giftTargetUser = giftTargetUser.slice(0, -1); else giftMessage = giftMessage.slice(0, -1); }
+    else if (e.key.length === 1 && giftScreen === "target" && giftTargetUser.length < 12) giftTargetUser += e.key;
+    else if (e.key.length === 1 && giftScreen === "message" && giftMessage.length < 80) giftMessage += e.key;
     return;
   }
 }, true);
 
-/* 起動時に受信 */
 setTimeout(receiveGifts, 600);
-
 })();
 </script>
 
