@@ -6472,10 +6472,11 @@ function openNameInput(){
   if (nameEl) {
     nameEl.value = nameInputText;
     nameEl.style.opacity = "1"; nameEl.style.pointerEvents = "auto";
-    nameEl.style.top = "50%"; nameEl.style.left = "50%";
-    nameEl.style.width = "300px"; nameEl.style.height = "44px";
+    const cr = canvas.getBoundingClientRect(), k = cr.width / W;
+    nameEl.style.top = (cr.top + cr.height*310/H) + "px"; nameEl.style.left = (cr.left + cr.width/2) + "px";
+    nameEl.style.width = (330*k) + "px"; nameEl.style.height = (50*k) + "px";
     nameEl.style.transform = "translate(-50%,-50%)";
-    nameEl.style.fontSize = "20px"; nameEl.style.textAlign = "center";
+    nameEl.style.fontSize = (20*k) + "px"; nameEl.style.textAlign = "center";
     nameEl.style.zIndex = "9999"; nameEl.style.background = "#001a1a";
     nameEl.style.color = "#00ffcc"; nameEl.style.border = "2px solid #00ffcc";
     nameEl.style.borderRadius = "6px"; nameEl.focus();
@@ -6972,6 +6973,7 @@ window.draw = function(){
   if (inboxScreen) { drawBackground(); drawInbox(); return; }
   _origDraw();
 };
+const _origStart = startPointer;
 function giftStart(e){
   if (e.target === nameEl || e.target === giftCodeEl) return;
   if (nameInputActive) {
@@ -7086,8 +7088,12 @@ canvas.removeEventListener("touchstart", startPointer);
 canvas.removeEventListener("mousedown", startPointer);
 
 window.addEventListener("keydown", (e) => {
-  if (nameInputActive) { e.stopImmediatePropagation(); return; }
-  if (giftCodeInputActive) { e.stopImmediatePropagation(); return; }
+  if (nameInputActive) { if (e.key === "Enter") { e.preventDefault(); confirmNameInput(); } e.stopImmediatePropagation(); return; }
+  if (giftCodeInputActive) {
+    if (e.key === "Enter") { e.preventDefault(); confirmGiftCode(); }
+    else if (e.key === "Escape") { e.preventDefault(); closeGiftCodeInput(); }
+    e.stopImmediatePropagation(); return;
+  }
   if (giftScreen === "target" || giftScreen === "message") {
     e.stopImmediatePropagation();
     if (e.key === "Enter") {
@@ -7105,5 +7111,222 @@ setTimeout(receiveGifts, 600);
 })();
 </script>
 
+<script>
+/* ========== RHYTHM SYNC : リズム連動演出 ========== */
+(function(){
+"use strict";
+
+/* ★ 曲に合わせて調整する場所 ★
+   attackBpm / attackOffset : Attack.mp3 のBPMと「最初の拍が鳴る秒数」
+   bossBpm / bossOffset     : ボスBGM(ファイル名のBPM 82)
+   perfectMs                : 拍の前後この時間(ms)以内の撃破が PERFECT */
+const CFG = { attackBpm: 128, attackOffset: 0, bossBpm: 82, bossOffset: 0, perfectMs: 80 };
+
+const SCALE = [57,60,62,64,67,69,72,74,76,79,81,84];   /* Aマイナーペンタ */
+const BTN = { x: 38, y: 274, r: 18 };
+
+let beatCount = 0, lastIdx = null, lastSrc = "", lastBeatPerf = 0, downbeat = false;
+let phase = 0, clock = { src: "free", bpm: 128, pos: 0 };
+let chain = 0, bestChain = 0, lastPerfectBeat = -99, lastTextBeat = -99, lastSlotKey = "", lastTime = 0;
+const anchors = {};
+
+const on = () => saveData.rhythmOn !== false;
+function active(){
+  return !(titleScreen || weaponMenu || specialMenu || shopScreen || gameOver || missionScreen ||
+           challengeScreen || studySelectScreen || hardChallengeScreen || pauseScreen ||
+           settingsScreen || emergencyMenu || studyQuizActive) && time > 0;
+}
+
+/* ---- 曲の再生位置から「今、何拍目か」を求める ---- */
+function mediaPos(audio, key){
+  const st = anchors[key] || (anchors[key] = { ap: 0, ct: -1 });
+  const now = performance.now(), ct = audio.currentTime;
+  const est = st.ct + (now - st.ap) / 1000;
+  if (st.ct < 0 || Math.abs(ct - est) > 0.06) { st.ct = ct; st.ap = now; return ct; }
+  return est;
+}
+function getClock(){
+  try {
+    if (bossBgmOn && bossAudio && !bossAudio.paused && bossAudio.readyState > 2)
+      return { src: "boss", bpm: CFG.bossBpm, pos: (mediaPos(bossAudio, "boss") - CFG.bossOffset) * CFG.bossBpm / 60 };
+    if (!bossBgmOn && bgmSchedulerId && audioCtx && audioCtx.state === "running")
+      return { src: "synth", bpm: BGM_BPM, pos: (bgmCurrentStep - (bgmNextStepTime - audioCtx.currentTime) / BGM_STEP_DUR) / 4 };
+    if (!bossBgmOn && bgmAudio && !bgmMp3Failed && !bgmAudio.paused && bgmAudio.readyState > 2)
+      return { src: "mp3", bpm: CFG.attackBpm, pos: (mediaPos(bgmAudio, "mp3") - CFG.attackOffset) * CFG.attackBpm / 60 };
+  } catch (e) {}
+  return { src: "free", bpm: BGM_BPM, pos: performance.now() / 1000 * BGM_BPM / 60 };
+}
+
+function tick(){
+  if (typeof time === "number") { if (time < lastTime) chain = 0; lastTime = time; }
+  const c = getClock(); clock = c;
+  if (c.src !== lastSrc) { lastSrc = c.src; lastIdx = null; }
+  const idx = Math.floor(c.pos);
+  if (lastIdx === null) lastIdx = idx;
+  if (idx !== lastIdx) {
+    lastIdx = idx; beatCount++;
+    lastBeatPerf = performance.now();
+    downbeat = ((idx % 4) + 4) % 4 === 0;
+    if (on() && active() && chain > 0 && beatCount - lastPerfectBeat >= 3) chain = 0;
+  }
+  phase = c.pos - idx;
+}
+
+/* ---- 音: 撃破音を16分音符に量子化して、キーに合ったメロディにする ---- */
+function pluck(freq, when, vol, dur){
+  const t = audioCtx.currentTime + when;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = "triangle"; o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+  o.connect(g); g.connect(seGain);
+  o.start(t); o.stop(t + dur + 0.03);
+}
+function quantNote(c, perfect){
+  if (!audioCtx || !seEnabled || audioCtx.state !== "running") return;
+  ensureGains();
+  const p16 = c.pos * 4, slot = Math.ceil(p16 - 0.001), key = c.src + ":" + slot;
+  if (key === lastSlotKey) return;
+  lastSlotKey = key;
+  const delay = Math.max(0, (slot - p16) * 15 / c.bpm);
+  const i = perfect ? Math.min(SCALE.length - 1, chain) : Math.floor(Math.random() * 5);
+  const f = noteFreq(SCALE[i]);
+  pluck(f, delay, perfect ? 0.16 : 0.07, perfect ? 0.22 : 0.14);
+  if (perfect) pluck(f * 2, delay, 0.07, 0.16);
+}
+
+/* ---- 撃破フック ---- */
+const MILESTONES = [4, 8, 16, 32, 64];
+function onKill(e){
+  if (!on() || !active()) return;
+  const c = getClock();
+  const ph = c.pos - Math.floor(c.pos);
+  const dms = Math.min(ph, 1 - ph) * 60000 / c.bpm;
+  const perfect = dms <= CFG.perfectMs;
+  if (perfect) {
+    const nb = ph > 0.5 ? beatCount + 1 : beatCount;
+    if (nb !== lastPerfectBeat) {
+      lastPerfectBeat = nb; chain++;
+      if (chain > bestChain) bestChain = chain;
+      if (MILESTONES.indexOf(chain) >= 0) {
+        const col = `hsl(${(chain * 14 + 170) % 360},100%,65%)`;
+        showBigDamage(player.x, player.y - 70, `RHYTHM x${chain}!`, col);
+        flash(col, 4); chroma(8); shake(10); burst(player.x, player.y, 40, col);
+        try { sfx.combo(); } catch (er) {}
+      }
+    }
+    const bonus = Math.round((Number(e.score) || 10) * Math.min(1.5, 0.3 + chain * 0.05));
+    score += bonus;
+    if (!bossMode) specialGauge = Math.min(SPECIAL_MAX, specialGauge + 0.25);
+    const col = `hsl(${(chain * 14 + 170) % 360},100%,70%)`;
+    burst(e.x, e.y, 14, col); shake(3);
+    if (beatCount !== lastTextBeat) { lastTextBeat = beatCount; showDamage(e.x, e.y - 24, chain >= 2 ? `PERFECT x${chain}` : "PERFECT", col); }
+  }
+  quantNote(c, perfect);
+}
+
+/* 撃破フック・弾ダメージ補正・描画フックを差し込む */
+const _ke = window.killEnemy;
+window.killEnemy = function(idx){
+  const e = enemies[idx];
+  const r = _ke.apply(this, arguments);
+  try { if (e && enemies.indexOf(e) === -1) onKill(e); } catch (er) {}
+  return r;
+};
+const _ab = window.addBullet;
+window.addBullet = function(d){
+  const n = bullets.length;
+  _ab.apply(this, arguments);
+  try {
+    if (on() && active() && chain > 0 && bullets.length > n) {
+      const b = bullets[bullets.length - 1];
+      if (b && typeof b.damage === "number") b.damage *= 1 + Math.min(0.3, chain * 0.02);
+    }
+  } catch (er) {}
+};
+
+/* ---- 描画 ---- */
+function drawRhythm(){
+  if (!active()) return;
+  const now = performance.now();
+  if (on()) {
+    const since = now - lastBeatPerf;
+    const pulse = Math.max(0, 1 - since / 240) * (downbeat ? 1 : 0.55);
+    const hue = (chain * 14 + 170) % 360;
+    ctx.save();
+    if (pulse > 0.01) {
+      ctx.shadowBlur = 25; ctx.shadowColor = `hsl(${hue},100%,60%)`;
+      ctx.strokeStyle = `hsla(${hue},100%,60%,${pulse * 0.6})`;
+      ctx.lineWidth = 8 + 14 * pulse;
+      ctx.strokeRect(0, 0, W, H);
+      ctx.shadowBlur = 0;
+    }
+    /* プレイヤーに収束するタイミングリング(収束した瞬間が拍) */
+    ctx.translate(W / 2, H / 2); ctx.scale(zoomPulse, zoomPulse); ctx.translate(-W / 2, -H / 2);
+    ctx.translate(shakeX, shakeY);
+    const pr = player.drawR;
+    const dms = Math.min(phase, 1 - phase) * 60000 / clock.bpm;
+    const inWin = dms <= CFG.perfectMs;
+    const rr = pr + 3 + (1 - phase) * 34;
+    ctx.lineWidth = 2 + phase * 2;
+    ctx.strokeStyle = inWin ? "#ffffff" : `hsla(${hue},100%,65%,${0.25 + 0.5 * phase})`;
+    ctx.shadowBlur = inWin ? 18 : 8; ctx.shadowColor = inWin ? "#ffffff" : `hsl(${hue},100%,60%)`;
+    ctx.beginPath(); ctx.arc(player.x, player.y, rr, 0, TAU); ctx.stroke();
+    if (since < 260) {
+      ctx.globalAlpha = (1 - since / 260) * 0.8;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = downbeat ? "#ffffff" : `hsl(${hue},100%,70%)`;
+      ctx.beginPath(); ctx.arc(player.x, player.y, pr + 6 + since / 260 * (downbeat ? 90 : 60), 0, TAU); ctx.stroke();
+    }
+    ctx.restore();
+    /* チェイン表示 */
+    if (chain >= 2) {
+      ctx.save();
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.shadowBlur = 14; ctx.shadowColor = `hsl(${hue},100%,60%)`;
+      ctx.fillStyle = `hsl(${hue},100%,72%)`;
+      ctx.font = `bold ${17 + Math.round(pulse * 5)}px Arial`;
+      ctx.fillText("BEAT x" + chain, BTN.x + BTN.r + 10, BTN.y + 1);
+      ctx.restore();
+    }
+  }
+  /* ON/OFFボタン */
+  ctx.save();
+  const col = on() ? "#ff66ff" : "#666";
+  ctx.shadowBlur = 12; ctx.shadowColor = col;
+  ctx.fillStyle = "rgba(0,20,30,.7)"; ctx.strokeStyle = col; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(BTN.x, BTN.y, BTN.r, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = on() ? "#ff99ff" : "#888";
+  ctx.font = "bold 16px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("♪", BTN.x, BTN.y + 1);
+  ctx.restore();
+}
+const _dr = window.draw;
+window.draw = function(){
+  try { tick(); } catch (e) {}
+  _dr();
+  try { drawRhythm(); } catch (e) {}
+};
+
+/* ---- ♪ボタン(リズム演出のON/OFF) ---- */
+function onDown(e){
+  if (e.target !== canvas || !active()) return;
+  const r = canvas.getBoundingClientRect();
+  const q = e.changedTouches ? e.changedTouches[0] : e;
+  const x = (q.clientX - r.left) * W / r.width, y = (q.clientY - r.top) * H / r.height;
+  if (Math.hypot(x - BTN.x, y - BTN.y) > BTN.r + 6) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  saveData.rhythmOn = !on(); chain = 0; writeSave();
+  if (seEnabled) { try { sfx.tap(); } catch (er) {} }
+}
+window.addEventListener("touchstart", onDown, { capture: true, passive: false });
+window.addEventListener("mousedown", onDown, { capture: true });
+
+window.rhythmState = () => ({ chain, bestChain, src: clock.src, bpm: clock.bpm, phase, beatCount });
+})();
+</script>
+
 </body>
 </html>
+  
